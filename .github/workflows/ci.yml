@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+      - name: Formatting
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - name: Vet
+        run: |
+          go vet ./...
+          (cd processor/isowatchprocessor && go vet ./...)
+          (cd examples/bank && go vet ./...)
+      - name: Tests (including real PostgreSQL 18)
+        env:
+          ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
+        run: go test -race -count=1 ./...
+      - name: Processor tests
+        run: cd processor/isowatchprocessor && go test -race -count=1 ./...
+      - name: Demo builds
+        run: cd examples/bank && go build ./...
+
+  collector:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+      - name: Build the collector
+        run: make collector
+      - name: Check the example configs
+        run: |
+          ./collector/build/isowatch-collector validate --config collector/config.yaml
+          ./collector/build/isowatch-collector validate --config collector/config.docker.yaml

@@ -1,0 +1,27 @@
+# Build an OpenTelemetry Collector that includes the IsoWatch processor.
+# Use "make collector" from the repository root. It fills in REPO_DIR,
+# because the builder needs an absolute path to the local module.
+dist:
+  name: isowatch-collector
+  description: OpenTelemetry Collector with the IsoWatch processor
+  output_path: ./build
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.162.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.162.0
+  - gomod: github.com/DCchoudhury15/isowatch/processor/isowatchprocessor v0.0.0
+
+exporters:
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.162.0
+  - gomod: go.opentelemetry.io/collector/exporter/otlpexporter v0.162.0
+  - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.162.0
+
+providers:
+  - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.68.0
+  - gomod: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.68.0
+
+replaces:
+  - github.com/DCchoudhury15/isowatch => REPO_DIR
+  - github.com/DCchoudhury15/isowatch/processor/isowatchprocessor => REPO_DIR/processor/isowatchprocessor

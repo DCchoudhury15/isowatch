@@ -1,0 +1,39 @@
+# Example collector config. Apps send OTLP to port 4318 (HTTP) or 4317
+# (gRPC). Anomalies are printed by the debug exporter and can also be sent
+# on to any OTLP backend (Jaeger, SigNoz, Grafana Tempo, ...).
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # IsoWatch must see transactions before batching or sampling drops any.
+  isowatch:
+    window: 2m
+    group_by: transaction
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+  # otlp:
+  #   endpoint: localhost:4317   # your tracing backend
+  #   tls:
+  #     insecure: true
+
+service:
+  telemetry:
+    logs:
+      # The collector normally logs only the first 10 identical messages per
+      # second. Turn that off so every anomaly is printed. (The anomaly spans
+      # themselves are never sampled.)
+      sampling:
+        enabled: false
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [isowatch, batch]
+      exporters: [debug]

@@ -1,0 +1,5 @@
+.git
+collector/build
+collector/.builder.yaml
+*.test
+*.out

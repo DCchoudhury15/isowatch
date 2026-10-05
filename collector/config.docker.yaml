@@ -1,0 +1,33 @@
+# Collector config used by docker-compose.yml. Anomalies go to Jaeger.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  isowatch:
+    window: 2m
+    group_by: transaction
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      sampling:
+        enabled: false
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [isowatch, batch]
+      exporters: [debug, otlp/jaeger]

@@ -1,0 +1,56 @@
+# Everything you need to see IsoWatch working:
+#
+#   docker compose up -d --build                         # start
+#   docker compose run --rm load                         # send buggy traffic
+#   docker compose run --rm load -safe                   # send fixed traffic
+#   docker compose run --rm load -auto                   # buggy traffic, protected by IsoWatch
+#   open http://localhost:16686                          # see the anomalies in Jaeger
+#   docker compose down                                  # stop
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    ports:
+      - "16686:16686"
+
+  collector:
+    build:
+      context: .
+      dockerfile: docker/collector.Dockerfile
+    depends_on:
+      - jaeger
+
+  bank:
+    build:
+      context: .
+      dockerfile: docker/bank.Dockerfile
+    command:
+      - serve
+      - -mode=both
+      - -otlp=collector:4318
+      - -dsn=postgres://postgres:postgres@postgres:5432/postgres
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      collector:
+        condition: service_started
+
+  load:
+    build:
+      context: .
+      dockerfile: docker/bank.Dockerfile
+    entrypoint: ["bank", "load", "-url=http://bank:8090"]
+    depends_on:
+      - bank
+    profiles: ["load"]
