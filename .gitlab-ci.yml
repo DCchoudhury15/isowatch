@@ -1,0 +1,39 @@
+# Same checks as .github/workflows/ci.yml, for the GitLab mirror.
+
+default:
+  image: golang:1.26
+  cache:
+    key: go-mod
+    paths:
+      - .cache/go-mod
+  before_script:
+    - export GOMODCACHE="$CI_PROJECT_DIR/.cache/go-mod"
+
+stages:
+  - test
+
+test:
+  stage: test
+  services:
+    - name: postgres:18
+      alias: postgres
+  variables:
+    POSTGRES_PASSWORD: postgres
+    ISOWATCH_TEST_DSN: postgres://postgres:postgres@postgres:5432/postgres
+  script:
+    - test -z "$(gofmt -l $(git ls-files '*.go'))"
+    - go vet ./...
+    - (cd processor/isowatchprocessor && go vet ./...)
+    - (cd examples/bank && go vet ./...)
+    # wait for PostgreSQL 18 to accept connections
+    - for i in $(seq 1 30); do (echo > /dev/tcp/postgres/5432) 2>/dev/null && break; sleep 2; done
+    - go test -race -count=1 ./...
+    - (cd processor/isowatchprocessor && go test -race -count=1 ./...)
+    - (cd examples/bank && go build ./...)
+
+collector:
+  stage: test
+  script:
+    - make collector
+    - ./collector/build/isowatch-collector validate --config collector/config.yaml
+    - ./collector/build/isowatch-collector validate --config collector/config.docker.yaml
