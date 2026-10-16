@@ -7,95 +7,190 @@
 <meta name="description" content="IsoWatch tells you when concurrent requests silently corrupt your data in PostgreSQL, and exactly which requests did it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* OpenTelemetry palette: blue #425CC7 + amber #F5A800 on deep navy */
   :root {
-    --bg: #050a14;
-    --panel: #0b1424;
-    --panel-2: #0f1b30;
-    --border: #18263f;
-    --text: #e6edf7;
-    --muted: #8a9bb5;
-    --dim: #5b6b85;
-    --accent: #3b82f6;
-    --accent-2: #60a5fa;
-    --bad: #f87171;
-    --good: #34d399;
-    --mono: "JetBrains Mono", ui-monospace, monospace;
+    --bg: #070a16;
+    --panel: #0c1226;
+    --panel-2: #111a35;
+    --line: #1c2649;
+    --line-2: #2a3768;
+    --text: #e8ecf8;
+    --muted: #8f9bc2;
+    --dim: #5a6690;
+    --blue: #425cc7;
+    --blue-2: #8597ec;
+    --amber: #f5a800;
+    --amber-2: #ffc94d;
+    --red: #f06363;
+    --green: #3ecf8e;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { scroll-behavior: smooth; }
-  body { background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; line-height: 1.6; overflow-x: hidden; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; overflow-x: hidden; }
   canvas#bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
-  a { color: var(--accent-2); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  a { color: var(--blue-2); text-decoration: none; }
+  a:hover { color: var(--amber-2); }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 20px; }
+  .mono { font-family: var(--mono); }
 
-  nav { position: sticky; top: 0; z-index: 10; background: rgba(5, 10, 20, 0.75); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); }
-  .logo-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; }
-  .nav-links { display: flex; gap: 22px; font-size: 14px; }
-  .nav-links a { color: var(--muted); }
-  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  /* top bar styled like a trace search header */
+  nav { position: sticky; top: 0; z-index: 20; background: rgba(7, 10, 22, 0.82); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-weight: 600; font-size: 16px; color: var(--text); }
+  .brand:hover { color: var(--text); }
+  .brand svg { flex: none; }
+  .crumbs { display: flex; gap: 4px; font-family: var(--mono); font-size: 13px; }
+  .crumbs a { color: var(--muted); padding: 6px 10px; border-radius: 6px; }
+  .crumbs a:hover { color: var(--text); background: var(--panel); }
+  .crumbs a.gh { color: var(--bg); background: var(--amber); font-weight: 600; }
+  .crumbs a.gh:hover { background: var(--amber-2); color: var(--bg); }
 
-  .hero { padding: 96px 0 72px; }
-  .pill { display: inline-block; font-size: 13px; color: var(--accent-2); background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); padding: 4px 12px; border-radius: 999px; margin-bottom: 24px; }
-  h1 { font-size: clamp(36px, 6vw, 64px); line-height: 1.08; font-weight: 800; letter-spacing: -0.03em; max-width: 820px; }
-  h1 span { color: var(--accent-2); }
-  .lead { margin-top: 22px; font-size: clamp(16px, 2vw, 19px); color: var(--muted); max-width: 640px; }
-  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px; font-weight: 600; font-size: 15px; transition: background 0.15s, border-color 0.15s; }
-  .btn:hover { text-decoration: none; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { background: #2563eb; }
-  .btn-ghost { border: 1px solid var(--border); color: var(--text); background: var(--panel); }
-  .btn-ghost:hover { border-color: #2a3d5e; }
+  /* hero */
+  .hero { display: grid; grid-template-columns: 1fr 1.08fr; gap: 48px; align-items: center; padding: 80px 0 64px; }
+  .eyebrow { font-family: var(--mono); font-size: 12.5px; color: var(--amber); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--amber); }
+  h1 { font-size: clamp(34px, 4.6vw, 54px); line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; }
+  h1 em { font-style: normal; color: var(--blue-2); }
+  .lead { margin-top: 20px; color: var(--muted); font-size: 17px; max-width: 520px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 8px; font: 600 14.5px var(--sans); cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+  .btn-blue { background: var(--blue); color: #fff; }
+  .btn-blue:hover { background: #5470e0; color: #fff; }
+  .btn-line { border-color: var(--line-2); color: var(--text); background: rgba(12, 18, 38, 0.7); }
+  .btn-line:hover { border-color: var(--amber); color: var(--amber-2); }
 
-  section { scroll-margin-top: 60px; padding: 72px 0; border-top: 1px solid rgba(24, 38, 63, 0.6); }
-  h2 { font-size: clamp(26px, 3.5vw, 36px); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; }
-  .sub { color: var(--muted); max-width: 680px; margin-bottom: 36px; }
+  /* trace viewer */
+  .viewer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px rgba(66, 92, 199, 0.35); }
+  .viewer-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); gap: 10px; }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); display: block; }
+  .axis { display: grid; grid-template-columns: 170px 1fr; font-family: var(--mono); font-size: 10.5px; color: var(--dim); border-bottom: 1px solid var(--line); }
+  .axis div:last-child { display: flex; justify-content: space-between; padding: 6px 12px; border-left: 1px solid var(--line); }
+  .axis div:first-child { padding: 6px 12px; }
+  .rows { position: relative; }
+  .row { display: grid; grid-template-columns: 170px 1fr; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid rgba(28, 38, 73, 0.6); cursor: default; transition: background 0.15s; }
+  .row:hover, .row.focus { background: var(--panel-2); }
+  .row .name { padding: 8px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .row .name.child { padding-left: 26px; color: var(--muted); }
+  .row .track { position: relative; border-left: 1px solid var(--line); height: 34px; background-image: linear-gradient(to right, rgba(28, 38, 73, 0.5) 1px, transparent 1px); background-size: 25% 100%; }
+  .bar { position: absolute; top: 9px; height: 16px; border-radius: 3px; background: var(--blue); width: 0; transition: width 0.55s cubic-bezier(.2,.7,.2,1); }
+  .bar.child { background: #2f428f; top: 11px; height: 12px; }
+  .bar.warn { background: var(--red); }
+  .bar.anom { background: var(--amber); box-shadow: 0 0 18px rgba(245, 168, 0, 0.55); }
+  .row.anomaly .name { color: var(--amber-2); }
+  .tag { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 4px; margin-left: 6px; vertical-align: 1px; }
+  .tag.err { background: rgba(240, 99, 99, 0.15); color: var(--red); }
+  .tag.amb { background: rgba(245, 168, 0, 0.15); color: var(--amber-2); }
+  .inspect { padding: 12px 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 66px; border-top: 1px solid var(--line); background: #0a0f20; }
+  .inspect b { color: var(--text); font-weight: 500; }
+  .inspect .k { color: var(--amber-2); }
+  svg.link { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  svg.link path { fill: none; stroke: var(--amber); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0; transition: opacity 0.4s; }
+  svg.link path.on { opacity: 0.9; animation: dash 1s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -16; } }
 
-  .race { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .lane { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-  .lane h3 { font-size: 14px; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
-  .step { font-family: var(--mono); font-size: 13.5px; padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; background: var(--panel-2); color: #c7d3e6; opacity: 0.35; transition: opacity 0.3s, background 0.3s; }
-  .step.on { opacity: 1; }
-  .step.hit { background: rgba(248, 113, 113, 0.12); color: #fecaca; }
-  .result { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
-  .balance { font-family: var(--mono); font-size: 15px; background: var(--panel); border: 1px solid var(--border); padding: 10px 14px; border-radius: 10px; }
-  .balance b { color: var(--bad); }
-  .balance i { font-style: normal; color: var(--good); }
+  /* sections */
+  section { padding: 80px 0; scroll-margin-top: 58px; }
+  .sec-head { display: grid; grid-template-columns: 220px 1fr; gap: 32px; margin-bottom: 36px; align-items: start; }
+  .sec-label { font-family: var(--mono); font-size: 12px; color: var(--dim); border-top: 2px solid var(--blue); padding-top: 10px; }
+  .sec-label b { color: var(--amber); font-weight: 500; display: block; font-size: 13px; }
+  h2 { font-size: clamp(26px, 3.2vw, 38px); line-height: 1.15; letter-spacing: -0.02em; font-weight: 700; }
+  .sec-head p { color: var(--muted); margin-top: 12px; max-width: 640px; }
 
-  pre.alert { background: #070e1b; border: 1px solid var(--border); border-left: 3px solid var(--bad); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.7; color: #c7d3e6; }
-  pre.alert .k { color: var(--bad); font-weight: 500; }
-  pre.alert .f { color: var(--good); }
-  pre.alert .t { color: var(--accent-2); }
+  /* version timeline */
+  .timeline { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .tl-grid { display: grid; grid-template-columns: 130px 1fr; row-gap: 14px; align-items: center; }
+  .tl-label { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .tl-lane { position: relative; height: 40px; border-radius: 8px; background: var(--panel-2); }
+  .ev { position: absolute; top: 6px; height: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: nowrap; opacity: 0.18; transition: opacity 0.3s, box-shadow 0.3s; border: 1px solid var(--line-2); background: #0d1430; color: var(--text); }
+  .ev.on { opacity: 1; }
+  .ev.read { border-color: #3b4f9e; }
+  .ev.write { background: #1b2a66; border-color: var(--blue); }
+  .ev.bad { background: rgba(240, 99, 99, 0.14); border-color: var(--red); color: #ffd0d0; }
+  .ev.ver { background: transparent; border-style: dashed; color: var(--blue-2); }
+  .ev.ver.on.latest { border-color: var(--amber); color: var(--amber-2); border-style: solid; }
+  .tl-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+  input[type=range] { flex: 1; min-width: 180px; accent-color: var(--amber); }
+  .tl-note { font-family: var(--mono); font-size: 13px; color: var(--text); min-height: 22px; flex-basis: 100%; }
+  .tl-note .warn { color: var(--amber-2); }
+  .balance { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .balance b { color: var(--text); }
+  .balance b.bad { color: var(--red); }
 
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; transition: border-color 0.2s; }
-  .card:hover { border-color: #2a3d5e; }
-  .card .n { font-family: var(--mono); color: var(--accent-2); font-size: 13px; margin-bottom: 10px; }
-  .card h3 { font-size: 17px; margin-bottom: 8px; }
-  .card p { color: var(--muted); font-size: 14.5px; }
-  code { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); padding: 1px 6px; border-radius: 5px; color: #c7d3e6; }
+  /* alert */
+  .alert { background: #0a0f20; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .alert-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .alert-head span:first-child { color: var(--amber-2); }
+  .alert pre { padding: 18px; overflow-x: auto; font-family: var(--mono); font-size: 12.8px; line-height: 1.75; color: #c9d1ee; }
+  .alert .k { color: var(--amber-2); }
+  .alert .t { color: var(--blue-2); text-decoration: underline dotted; text-underline-offset: 3px; }
+  .alert .f { color: var(--green); }
 
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
-  .stat .v { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; }
-  .stat .l { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  /* pipeline */
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
+  .stage { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 22px 20px; min-height: 210px; transition: border-color 0.2s, background 0.2s; }
+  .stage + .stage { border-left: 0; }
+  .stage:first-child { border-radius: 12px 0 0 12px; }
+  .stage:last-child { border-radius: 0 12px 12px 0; }
+  .stage:hover { background: var(--panel-2); border-color: var(--line-2); }
+  .stage .num { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .stage h3 { font-size: 16.5px; margin: 8px 0 8px; }
+  .stage p { color: var(--muted); font-size: 14px; }
+  .stage code, p code, li code { font-family: var(--mono); font-size: 12.5px; color: var(--amber-2); background: rgba(245, 168, 0, 0.08); padding: 1px 5px; border-radius: 4px; }
+  .stage::after { content: ""; position: absolute; right: -7px; top: 50%; width: 12px; height: 12px; border-top: 1px solid var(--line-2); border-right: 1px solid var(--line-2); background: var(--panel); transform: translateY(-50%) rotate(45deg); z-index: 2; }
+  .stage:last-child::after { display: none; }
+  .stage:hover::after { background: var(--panel-2); }
+  .flow { position: absolute; left: 0; right: 0; bottom: 14px; height: 2px; pointer-events: none; overflow: hidden; }
+  .flow i { position: absolute; width: 60px; height: 2px; background: linear-gradient(90deg, transparent, var(--amber)); animation: flow 3.2s linear infinite; }
+  @keyframes flow { from { left: -60px; } to { left: 100%; } }
 
-  pre.term { background: #070e1b; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.8; color: #c7d3e6; }
-  pre.term .c { color: var(--dim); }
+  /* results */
+  .numbers { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .num-cell { padding: 28px 24px; background: var(--panel); }
+  .num-cell + .num-cell { border-left: 1px solid var(--line); }
+  .num-cell .v { font-family: var(--mono); font-size: clamp(30px, 4vw, 44px); font-weight: 600; letter-spacing: -0.02em; color: var(--amber); }
+  .num-cell .l { color: var(--muted); font-size: 14px; margin-top: 6px; }
+  .runs { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+  .runs span { font-family: var(--mono); font-size: 11.5px; padding: 2px 8px; border-radius: 4px; background: var(--panel-2); color: var(--blue-2); }
 
-  footer { padding: 40px 0 56px; border-top: 1px solid var(--border); color: var(--dim); font-size: 14px; }
-  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+  /* terminal */
+  .term { background: #0a0f20; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .term-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .copy { font: 500 12px var(--mono); background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .copy:hover { border-color: var(--amber); color: var(--amber-2); }
+  .term pre { padding: 18px; font-family: var(--mono); font-size: 13.5px; line-height: 1.85; overflow-x: auto; color: #d6dcf3; }
+  .term .c { color: var(--dim); }
+  .term .p { color: var(--amber); user-select: none; }
 
-  @media (max-width: 760px) {
-    .race, .grid3, .stats { grid-template-columns: 1fr; }
-    .nav-links { gap: 14px; }
-    .nav-links .hide-sm { display: none; }
-    .hero { padding: 64px 0 48px; }
+  footer { border-top: 1px solid var(--line); padding: 34px 0 50px; font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 920px) {
+    .hero { grid-template-columns: 1fr; padding-top: 56px; }
+    .sec-head { grid-template-columns: 1fr; gap: 14px; }
+    .pipe { grid-template-columns: 1fr 1fr; }
+    .stage { border: 1px solid var(--line) !important; border-radius: 0 !important; }
+    .stage::after { display: none; }
+    .numbers { grid-template-columns: 1fr; }
+    .num-cell + .num-cell { border-left: 0; border-top: 1px solid var(--line); }
+  }
+  @media (max-width: 560px) {
+    .crumbs a:not(.gh) { display: none; }
+    .row, .axis { grid-template-columns: 118px 1fr; }
+    .row .name { font-size: 11px; padding: 8px 8px; }
+    .row .name.child { padding-left: 16px; }
+    .pipe { grid-template-columns: 1fr; }
+    .tl-grid { grid-template-columns: 1fr; row-gap: 6px; }
+    .tl-lane { height: auto; display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+    .ev { position: static; transform: none; height: 26px; font-size: 11px; align-self: flex-start; }
+    .tl-label { margin-top: 6px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .flow i, svg.link path.on { animation: none; }
   }
 </style>
 </head>
@@ -104,231 +199,322 @@
 
 <nav>
   <div class="wrap">
-    <a class="logo" href="#">
-      <span class="logo-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
-      IsoWatch
+    <a class="brand" href="#">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M3 6h10" stroke="#425CC7"/><path d="M6 12h12" stroke="#425CC7"/><path d="M9 18h12" stroke="#F5A800"/><circle cx="20" cy="6" r="2" fill="#F5A800" stroke="none"/></svg>
+      isowatch
     </a>
-    <div class="nav-links">
-      <a href="#problem" class="hide-sm">Problem</a>
-      <a href="#how">How it works</a>
-      <a href="#results" class="hide-sm">Results</a>
-      <a href="https://github.com/DCchoudhury15/isowatch">GitHub</a>
+    <div class="crumbs">
+      <a href="#race">/race</a>
+      <a href="#how">/how</a>
+      <a href="#results">/results</a>
+      <a class="gh" href="https://github.com/DCchoudhury15/isowatch">github &rarr;</a>
     </div>
   </div>
 </nav>
 
-<header class="hero">
-  <div class="wrap">
-    <span class="pill">PostgreSQL 18 &middot; OpenTelemetry &middot; Go</span>
-    <h1>Your database lost a write. <span>IsoWatch tells you which requests did it.</span></h1>
-    <p class="lead">Concurrent requests can silently corrupt data under PostgreSQL's default isolation level. No error, no log line. IsoWatch catches lost updates and write skew as they actually happen in live traffic, names the traces involved, and tells you how to fix them.</p>
-    <div class="cta">
-      <a class="btn btn-primary" href="https://github.com/DCchoudhury15/isowatch">View on GitHub</a>
-      <a class="btn btn-ghost" href="https://gitlab.com/divyanshuchoudhury51/isowatch">GitLab mirror</a>
-      <a class="btn btn-ghost" href="#start">Try the demo</a>
+<div class="wrap">
+  <header class="hero">
+    <div>
+      <div class="eyebrow">PostgreSQL 18 &middot; OpenTelemetry</div>
+      <h1>Your database lost a write. <em>IsoWatch shows you the trace that did it.</em></h1>
+      <p class="lead">Under PostgreSQL's default isolation level, two concurrent requests can silently overwrite each other. No error, no log line. IsoWatch catches lost updates and write skew as they happen in live traffic and adds an anomaly span to the guilty trace.</p>
+      <div class="actions">
+        <a class="btn btn-blue" href="https://github.com/DCchoudhury15/isowatch">View source</a>
+        <a class="btn btn-line" href="https://gitlab.com/divyanshuchoudhury51/isowatch">GitLab mirror</a>
+        <a class="btn btn-line" href="#start">Run the demo</a>
+      </div>
     </div>
-  </div>
-</header>
 
-<section id="problem">
-  <div class="wrap">
-    <h2>Two deposits. One disappears.</h2>
-    <p class="sub">Both requests read the balance, both write it back. PostgreSQL reports success for both. Press play to watch it happen.</p>
-    <div class="race">
-      <div class="lane">
-        <h3>Request A: deposit +50</h3>
-        <div class="step" data-i="0">SELECT balance &rarr; 100</div>
-        <div class="step" data-i="2">UPDATE balance = 150</div>
-        <div class="step" data-i="3">COMMIT &#10003;</div>
+    <div class="viewer" id="viewer">
+      <div class="viewer-head">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <span>service: bank-demo &middot; 2 traces</span>
+        <span id="replayTrace" style="cursor:pointer;color:var(--amber-2)">&#8635; replay</span>
       </div>
-      <div class="lane">
-        <h3>Request B: deposit +30</h3>
-        <div class="step" data-i="1">SELECT balance &rarr; 100</div>
-        <div class="step hit-target" data-i="4">UPDATE balance = 130</div>
-        <div class="step" data-i="5">COMMIT &#10003;</div>
+      <div class="axis"><div>span</div><div><span>0ms</span><span>4ms</span><span>8ms</span><span>12ms</span></div></div>
+      <div class="rows" id="rows">
+        <div class="row" data-info="trace <b>77c63e5e</b> &middot; POST /deposit amount=50 &middot; status 200"><div class="name">POST /deposit +50</div><div class="track"><span class="bar" data-l="2" data-w="52"></span></div></div>
+        <div class="row" data-info="<b>SELECT</b> balance FROM accounts WHERE id = $1 &middot; read version <span class='k'>xmin 3448</span>"><div class="name child">SELECT accounts</div><div class="track"><span class="bar child" data-l="6" data-w="10"></span></div></div>
+        <div class="row" data-info="<b>UPDATE</b> accounts SET balance = $1 &middot; replaced <span class='k'>3448</span>, wrote <span class='k'>3449</span>"><div class="name child">UPDATE accounts</div><div class="track"><span class="bar child" data-l="30" data-w="14"></span></div></div>
+        <div class="row" id="rowB" data-info="trace <b>3eed3a5c</b> &middot; POST /deposit amount=30 &middot; status 200"><div class="name">POST /deposit +30</div><div class="track"><span class="bar" data-l="10" data-w="82"></span></div></div>
+        <div class="row" data-info="<b>SELECT</b> balance FROM accounts WHERE id = $1 &middot; read version <span class='k'>xmin 3448</span> (stale by the time it writes)"><div class="name child">SELECT accounts</div><div class="track"><span class="bar child" data-l="14" data-w="10"></span></div></div>
+        <div class="row" data-info="<b>UPDATE</b> accounts SET balance = $1 &middot; read 3448 but replaced <span class='k'>3449</span>, a version it never saw"><div class="name child">UPDATE accounts <span class="tag err">stale</span></div><div class="track"><span class="bar child warn" data-l="62" data-w="14"></span></div></div>
+        <div class="row anomaly" id="rowAnom" data-info="<span class='k'>isowatch.anomaly</span> kind=lost-update table=accounts(1) &middot; links to trace <b>77c63e5e</b> &middot; fix: SELECT ... FOR UPDATE"><div class="name child">isowatch.anomaly <span class="tag amb">lost-update</span></div><div class="track"><span class="bar anom" data-l="80" data-w="11"></span></div></div>
+        <svg class="link" id="link"><path id="linkPath" d=""/></svg>
+      </div>
+      <div class="inspect" id="inspect">Hover a span to inspect it.</div>
+    </div>
+  </header>
+</div>
+
+<section id="race">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-label"><b>01 / the race</b>accounts(1)</div>
+      <div>
+        <h2>Two deposits of +50 and +30. The balance ends at 130, not 180.</h2>
+        <p>Drag through the timeline. Every row version in PostgreSQL carries <code>xmin</code>, the id of the transaction that wrote it. Watch which version each request reads and which one it replaces.</p>
       </div>
     </div>
-    <div class="result">
-      <button class="btn btn-primary" id="play" type="button">Play</button>
-      <div class="balance">final balance: <b id="final">?</b> &nbsp; expected: <i>180</i></div>
+    <div class="timeline">
+      <div class="tl-grid">
+        <div class="tl-label">request A +50</div>
+        <div class="tl-lane">
+          <span class="ev read" data-s="1" style="left:14%">read v3448 &rarr; 100</span>
+          <span class="ev write" data-s="3" style="left:46%">write v3449 = 150</span>
+        </div>
+        <div class="tl-label">request B +30</div>
+        <div class="tl-lane">
+          <span class="ev read" data-s="2" style="left:28%">read v3448 &rarr; 100</span>
+          <span class="ev bad r2" data-s="4" style="left:78%">replace v3449 = 130</span>
+        </div>
+        <div class="tl-label">row versions</div>
+        <div class="tl-lane">
+          <span class="ev ver" data-s="0" style="left:9%">v3448</span>
+          <span class="ev ver" data-s="3" style="left:46%">v3449</span>
+          <span class="ev ver r2" data-s="4" style="left:78%">v3450</span>
+        </div>
+      </div>
+      <div class="tl-controls">
+        <button class="btn btn-line" id="tlPlay" type="button">&#9654; play</button>
+        <input type="range" id="tlRange" min="0" max="5" value="0" step="1" aria-label="timeline step">
+        <span class="balance">balance <b id="tlBal">100</b> &middot; expected <b>180</b></span>
+        <div class="tl-note" id="tlNote"></div>
+      </div>
     </div>
   </div>
 </section>
 
-<section>
+<section id="alert">
   <div class="wrap">
-    <h2>What you get instead of silence</h2>
-    <p class="sub">An alert in your tracing tool (Jaeger, SigNoz, Grafana Tempo) with the facts, the SQL, the traces and the fix.</p>
-<pre class="alert"><span class="k">ANOMALY lost-update:</span> Lost update on public.accounts(1): a transaction wrote this row
-based on an old read and replaced 1 newer version(s) it never saw.
-    deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> read     accounts(1) version 3449: SELECT balance ...
-    deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> replaced accounts(1) version 3449: UPDATE accounts ...
-    deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> wrote    accounts(1) version 3450: UPDATE accounts ...
-    deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> replaced accounts(1) version 3450: UPDATE accounts ...
-    <span class="f">fix: add FOR UPDATE to the SELECT, or write SET balance = balance + $1,
-         or run these transactions at SERIALIZABLE and retry on error 40001.</span></pre>
+    <div class="sec-head">
+      <div class="sec-label"><b>02 / the alert</b>isowatch.anomaly</div>
+      <div>
+        <h2>Facts, not guesses. The SQL, the traces and the fix.</h2>
+        <p>The alert lands in your tracing tool (Jaeger, SigNoz, Grafana Tempo) as a span linked to every request involved.</p>
+      </div>
+    </div>
+    <div class="alert">
+      <div class="alert-head"><span>ANOMALY lost-update</span><span>public.accounts(1)</span></div>
+<pre><span class="k">Lost update on public.accounts(1):</span> a transaction wrote this row based on an old read
+and replaced 1 newer version(s) it never saw.
+  deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> read     version 3449: SELECT balance FROM accounts WHERE id = $1
+  deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> replaced version 3449: UPDATE accounts SET balance = $1 WHERE id = $2
+  deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> wrote    version 3450: UPDATE accounts SET balance = $1 WHERE id = $2
+  deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> replaced version 3450: UPDATE accounts SET balance = $1 WHERE id = $2
+  <span class="f">fix: add FOR UPDATE to the SELECT, or write SET balance = balance + $1,
+       or run these transactions at SERIALIZABLE and retry on error 40001.</span></pre>
+    </div>
   </div>
 </section>
 
 <section id="how">
   <div class="wrap">
-    <h2>How it knows</h2>
-    <p class="sub">Every row version in PostgreSQL carries <code>xmin</code>, the id of the transaction that wrote it. IsoWatch reads that number quietly. It reports facts, not guesses.</p>
-    <div class="grid3">
-      <div class="card">
-        <div class="n">01 / read</div>
-        <h3>Which version you read</h3>
-        <p>On <code>SELECT</code>, IsoWatch adds the row's <code>xmin</code> as a hidden column. Your code gets exactly the columns it asked for.</p>
-      </div>
-      <div class="card">
-        <div class="n">02 / write</div>
-        <h3>Which version you replaced</h3>
-        <p>On <code>UPDATE</code>, <code>INSERT</code> and <code>DELETE</code>, it adds <code>RETURNING old.xmin, new.xmin</code>, new in PostgreSQL 18.</p>
-      </div>
-      <div class="card">
-        <div class="n">03 / check</div>
-        <h3>Find the cycle</h3>
-        <p>Read 100 but replaced 150 means a write was overwritten unseen. IsoWatch builds Adya's dependency graph and looks for cycles, in your app or in an OpenTelemetry Collector.</p>
+    <div class="sec-head">
+      <div class="sec-label"><b>03 / the pipeline</b>app &rarr; collector</div>
+      <div>
+        <h2>From your pgx transaction to an anomaly span.</h2>
+        <p>Two hidden columns on the way in, a dependency graph on the way out. The checking model is Adya's, the same one the Jepsen tool Elle uses.</p>
       </div>
     </div>
-    <div class="grid3" style="margin-top:16px">
-      <div class="card">
-        <div class="n">protect</div>
-        <h3>Fix only where it hurts</h3>
-        <p>Once it sees an anomaly, IsoWatch can run just those named transactions at SERIALIZABLE and retry them. Everything else stays fast.</p>
-      </div>
-      <div class="card">
-        <div class="n">trace</div>
-        <h3>Linked to your requests</h3>
-        <p>Alerts are <code>isowatch.anomaly</code> spans added to the trace of the request, with links to the other requests involved.</p>
-      </div>
-      <div class="card">
-        <div class="n">ignore</div>
-        <h3>Accept what is fine</h3>
-        <p>Some races do not matter, like "last seen" timestamps. Ignore them by table or by transaction name.</p>
-      </div>
+    <div class="pipe">
+      <div class="stage"><div class="num">capture</div><h3>Track what you read</h3><p>On <code>SELECT</code> the row's <code>xmin</code> is added as a hidden column. Your code gets exactly the columns it asked for.</p></div>
+      <div class="stage"><div class="num">capture</div><h3>Track what you replaced</h3><p>Writes get <code>RETURNING old.xmin, new.xmin</code>, new in PostgreSQL 18. Now every overwrite has proof.</p></div>
+      <div class="stage"><div class="num">collector processor</div><h3>Find the cycle</h3><p>Transactions become OTel spans. The processor builds the graph and looks for cycles across traces, in any order they arrive.</p></div>
+      <div class="stage"><div class="num">protect</div><h3>Fix only where it hurts</h3><p>Once it sees an anomaly, IsoWatch can run just those named transactions at SERIALIZABLE and retry them.</p></div>
+      <div class="flow"><i></i></div>
     </div>
   </div>
 </section>
 
 <section id="results">
   <div class="wrap">
-    <h2>Measured against real PostgreSQL 18</h2>
-    <p class="sub">16 workers, 640 increments, 5 runs. The lost writes IsoWatch counted matched the writes the database actually lost, every run.</p>
-    <div class="stats">
-      <div class="stat"><div class="v" data-count="100" data-suffix="%">0%</div><div class="l">exact match on lost writes (582, 582, 594, 596, 592)</div></div>
-      <div class="stat"><div class="v" data-count="0">0</div><div class="l">false alarms at SERIALIZABLE and with FOR UPDATE</div></div>
-      <div class="stat"><div class="v" data-count="640" data-prefix="0 / ">0</div><div class="l">increments lost after protection kicked in</div></div>
+    <div class="sec-head">
+      <div class="sec-label"><b>04 / the numbers</b>real PostgreSQL 18</div>
+      <div>
+        <h2>It counts exactly what the database lost.</h2>
+        <p>16 workers, 640 increments, 5 runs. Then the same code with protection turned on.</p>
+      </div>
+    </div>
+    <div class="numbers">
+      <div class="num-cell"><div class="v" data-count="5" data-suffix=" / 5">0 / 5</div><div class="l">runs where lost writes counted matched lost writes in the database</div><div class="runs"><span>582</span><span>582</span><span>594</span><span>596</span><span>592</span></div></div>
+      <div class="num-cell"><div class="v" data-count="0">0</div><div class="l">false alarms at SERIALIZABLE and with SELECT ... FOR UPDATE</div></div>
+      <div class="num-cell"><div class="v" data-count="640" data-prefix="0 / ">0 / 0</div><div class="l">increments lost after protection kicked in (16 were lost before it did)</div></div>
     </div>
   </div>
 </section>
 
 <section id="start">
   <div class="wrap">
-    <h2>See it in 2 minutes</h2>
-    <p class="sub">Docker only. Starts PostgreSQL 18, Jaeger, the IsoWatch collector and a small demo bank with the bug.</p>
-<pre class="term"><span class="c"># clone and start everything</span>
-git clone https://github.com/DCchoudhury15/isowatch && cd isowatch
-make demo-up
-<span class="c"># 200 concurrent deposits through the buggy code</span>
-make demo-load
-<span class="c"># then open http://localhost:16686 and look for the red traces</span></pre>
+    <div class="sec-head">
+      <div class="sec-label"><b>05 / try it</b>docker only</div>
+      <div>
+        <h2>See it in two minutes.</h2>
+        <p>Starts PostgreSQL 18, Jaeger, the IsoWatch collector and a tiny bank with the bug. Then open Jaeger and look for the red traces.</p>
+      </div>
+    </div>
+    <div class="term">
+      <div class="term-head"><span>bash</span><button class="copy" id="copy" type="button">copy</button></div>
+<pre id="cmds"><span class="p">$ </span>git clone https://github.com/DCchoudhury15/isowatch &amp;&amp; cd isowatch
+<span class="p">$ </span>make demo-up
+<span class="p">$ </span>make demo-load              <span class="c"># 200 concurrent deposits, buggy code</span>
+<span class="p">$ </span>make demo-load MODE=-auto   <span class="c"># same code, protected by IsoWatch</span>
+<span class="c"># open http://localhost:16686, service bank-demo</span></pre>
+    </div>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <span>IsoWatch &middot; by Divyanshu Choudhury</span>
-    <span><a href="https://github.com/DCchoudhury15/isowatch">GitHub</a> &middot; <a href="https://gitlab.com/divyanshuchoudhury51/isowatch">GitLab</a></span>
+    <span>isowatch &middot; Divyanshu Choudhury</span>
+    <span><a href="https://github.com/DCchoudhury15/isowatch">github</a> &middot; <a href="https://gitlab.com/divyanshuchoudhury51/isowatch">gitlab</a></span>
   </div>
 </footer>
 
 <script>
-// Interactive background: dot grid lit around the pointer, over slow deep blue glows.
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Background: faint span bars drifting across lanes, lit amber near the pointer.
 (() => {
-  const DOT = "96, 165, 250", GLOW_A = "30, 58, 138", GLOW_B = "23, 37, 84";
-  const GAP = 28, RADIUS = 200;
-  const canvas = document.getElementById("bg");
-  const ctx = canvas.getContext("2d");
-  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const p = { x: -9999, y: -9999, tx: -9999, ty: -9999 };
-  let w = 0, h = 0, frame = 0;
+  const canvas = document.getElementById("bg"), ctx = canvas.getContext("2d");
+  const p = { x: -9999, y: -9999 };
+  let w = 0, h = 0, bars = [];
+  const LANE = 26;
+  const seed = () => {
+    bars = [];
+    for (let y = LANE; y < h; y += LANE) {
+      let x = -Math.random() * 300;
+      while (x < w + 300) {
+        const len = 30 + Math.random() * 160;
+        bars.push({ x, y, len, speed: 0.08 + Math.random() * 0.22 });
+        x += len + 40 + Math.random() * 260;
+      }
+    }
+  };
   const resize = () => {
     const dpr = Math.min(devicePixelRatio || 1, 2);
     w = innerWidth; h = innerHeight;
     canvas.width = w * dpr; canvas.height = h * dpr;
     canvas.style.width = w + "px"; canvas.style.height = h + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    seed();
   };
-  const move = (x, y) => { p.tx = x; p.ty = y; if (p.x < -1000) { p.x = x; p.y = y; } };
-  addEventListener("mousemove", e => move(e.clientX, e.clientY), { passive: true });
-  addEventListener("touchmove", e => e.touches[0] && move(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
-  document.addEventListener("mouseleave", () => { p.tx = -9999; p.ty = -9999; });
+  addEventListener("mousemove", e => { p.x = e.clientX; p.y = e.clientY; }, { passive: true });
+  addEventListener("touchmove", e => { if (e.touches[0]) { p.x = e.touches[0].clientX; p.y = e.touches[0].clientY; } }, { passive: true });
   addEventListener("resize", resize);
-  const glow = (x, y, r, c) => {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, c); g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-  };
   const draw = () => {
-    frame++; const t = frame / 60, d = still ? 0 : 1, s = Math.max(w, h);
-    p.x += (p.tx - p.x) * 0.12; p.y += (p.ty - p.y) * 0.12;
     ctx.clearRect(0, 0, w, h);
-    glow(w * (0.2 + 0.05 * Math.sin(t * 0.15) * d), h * (0.15 + 0.05 * Math.cos(t * 0.11) * d), s * 0.55, `rgba(${GLOW_A}, 0.18)`);
-    glow(w * (0.85 + 0.04 * Math.cos(t * 0.13) * d), h * (0.8 + 0.05 * Math.sin(t * 0.09) * d), s * 0.5, `rgba(${GLOW_B}, 0.25)`);
-    if (p.x > -1000) glow(p.x, p.y, RADIUS * 2, `rgba(${GLOW_A}, 0.14)`);
-    for (let x = GAP / 2; x < w; x += GAP) for (let y = GAP / 2; y < h; y += GAP) {
-      const dist = Math.hypot(x - p.x, y - p.y), near = dist < RADIUS ? 1 - dist / RADIUS : 0;
-      ctx.fillStyle = near > 0 ? `rgba(${DOT}, ${0.08 + near * 0.4})` : "rgba(120, 140, 170, 0.09)";
-      const z = 1 + near * 1.2; ctx.fillRect(x - z / 2, y - z / 2, z, z);
+    const g = ctx.createRadialGradient(w * 0.8, h * 0.1, 0, w * 0.8, h * 0.1, Math.max(w, h) * 0.7);
+    g.addColorStop(0, "rgba(66, 92, 199, 0.16)"); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    for (const b of bars) {
+      if (!still) { b.x += b.speed; if (b.x > w + 40) b.x = -b.len - Math.random() * 200; }
+      const cx = Math.max(b.x, Math.min(p.x, b.x + b.len));
+      const d = Math.hypot(cx - p.x, b.y - p.y);
+      const near = d < 170 ? 1 - d / 170 : 0;
+      ctx.fillStyle = near > 0 ? `rgba(245, 168, 0, ${0.06 + near * 0.45})` : "rgba(66, 92, 199, 0.10)";
+      ctx.fillRect(b.x, b.y - 2, b.len, 4);
     }
     requestAnimationFrame(draw);
   };
   resize(); draw();
 })();
 
-// The lost update, step by step.
+// Trace viewer: bars grow in order, then the anomaly span and its link appear.
 (() => {
-  const steps = [...document.querySelectorAll(".step")].sort((a, b) => a.dataset.i - b.dataset.i);
-  const final = document.getElementById("final");
-  const btn = document.getElementById("play");
-  let timer;
-  btn.addEventListener("click", () => {
-    clearInterval(timer);
-    steps.forEach(s => s.classList.remove("on", "hit"));
-    final.textContent = "?";
-    let i = 0;
-    timer = setInterval(() => {
-      if (i < steps.length) {
-        steps[i].classList.add("on");
-        if (steps[i].classList.contains("hit-target")) steps[i].classList.add("hit");
-        i++;
-      } else {
-        final.textContent = "130";
-        btn.textContent = "Play again";
-        clearInterval(timer);
-      }
-    }, 650);
+  const rows = [...document.querySelectorAll("#rows .row")];
+  const inspect = document.getElementById("inspect");
+  const path = document.getElementById("linkPath");
+  const container = document.getElementById("rows");
+  let timers = [];
+  const drawLink = () => {
+    const cr = container.getBoundingClientRect();
+    const a = rows[0].querySelector(".bar").getBoundingClientRect();
+    const b = document.querySelector("#rowAnom .bar").getBoundingClientRect();
+    const x1 = b.left - cr.left + b.width / 2, y1 = b.top - cr.top;
+    const x2 = a.right - cr.left, y2 = a.bottom - cr.top;
+    path.setAttribute("d", `M ${x1} ${y1} C ${x1} ${y1 - 60}, ${x2 + 40} ${y2 + 40}, ${x2} ${y2}`);
+  };
+  const play = () => {
+    timers.forEach(clearTimeout); timers = [];
+    path.classList.remove("on");
+    rows.forEach(r => { const bar = r.querySelector(".bar"); bar.style.transition = "none"; bar.style.width = "0"; bar.style.left = bar.dataset.l + "%"; });
+    requestAnimationFrame(() => rows.forEach((r, i) => {
+      timers.push(setTimeout(() => {
+        const bar = r.querySelector(".bar");
+        bar.style.transition = "";
+        bar.style.width = bar.dataset.w + "%";
+        if (r.id === "rowAnom") timers.push(setTimeout(() => { drawLink(); path.classList.add("on"); inspect.innerHTML = r.dataset.info; }, 600));
+      }, still ? 0 : 280 * i));
+    }));
+  };
+  rows.forEach(r => {
+    r.addEventListener("mouseenter", () => { inspect.innerHTML = r.dataset.info; rows.forEach(x => x.classList.toggle("focus", x === r)); });
   });
+  container.addEventListener("mouseleave", () => rows.forEach(x => x.classList.remove("focus")));
+  document.getElementById("replayTrace").addEventListener("click", play);
+  addEventListener("resize", () => { if (path.classList.contains("on")) drawLink(); });
+  play();
 })();
 
-// Count up the stats when they scroll into view.
+// Version timeline scrubber.
 (() => {
-  const els = document.querySelectorAll("[data-count]");
+  const notes = [
+    "Row accounts(1) is at version 3448, balance 100.",
+    "A reads version 3448: balance 100.",
+    "B reads the same version 3448: balance 100.",
+    "A writes 150 and commits. The row is now version 3449.",
+    "<span class='warn'>B read 3448 but replaces 3449, a version it never saw. A's +50 is gone.</span>",
+    "<span class='warn'>IsoWatch: lost-update on accounts(1), traces 77c63e5e and 3eed3a5c. Fix: SELECT ... FOR UPDATE.</span>",
+  ];
+  const bal = [100, 100, 100, 150, 130, 130];
+  const range = document.getElementById("tlRange"), note = document.getElementById("tlNote"), balEl = document.getElementById("tlBal");
+  const evs = [...document.querySelectorAll(".ev")];
+  const btn = document.getElementById("tlPlay");
+  let timer;
+  const show = s => {
+    range.value = s;
+    evs.forEach(e => e.classList.toggle("on", +e.dataset.s <= s));
+    const vers = evs.filter(e => e.classList.contains("ver") && +e.dataset.s <= s);
+    evs.forEach(e => e.classList.remove("latest"));
+    if (vers.length) vers[vers.length - 1].classList.add("latest");
+    note.innerHTML = notes[s];
+    balEl.textContent = bal[s];
+    balEl.classList.toggle("bad", s >= 4);
+  };
+  range.addEventListener("input", () => { clearInterval(timer); show(+range.value); });
+  btn.addEventListener("click", () => {
+    clearInterval(timer);
+    let s = 0; show(0);
+    timer = setInterval(() => { s++; show(s); if (s >= 5) clearInterval(timer); }, 1100);
+  });
+  show(0);
+})();
+
+// Count-up numbers.
+(() => {
   const io = new IntersectionObserver(entries => entries.forEach(e => {
     if (!e.isIntersecting) return;
     io.unobserve(e.target);
     const el = e.target, end = +el.dataset.count, pre = el.dataset.prefix || "", suf = el.dataset.suffix || "";
     const t0 = performance.now();
     const tick = now => {
-      const k = Math.min(1, (now - t0) / 1000);
+      const k = still ? 1 : Math.min(1, (now - t0) / 1100);
       el.textContent = pre + Math.round(end * (1 - Math.pow(1 - k, 3))) + suf;
       if (k < 1) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   }), { threshold: 0.4 });
-  els.forEach(el => io.observe(el));
+  document.querySelectorAll("[data-count]").forEach(el => io.observe(el));
 })();
+
+// Copy the demo commands.
+document.getElementById("copy").addEventListener("click", e => {
+  const text = [...document.getElementById("cmds").innerText.split("\n")]
+    .filter(l => l.startsWith("$ ")).map(l => l.slice(2).replace(/\s+#.*$/, "")).join("\n");
+  try { navigator.clipboard.writeText(text); e.target.textContent = "copied"; } catch { e.target.textContent = "select + copy"; }
+  setTimeout(() => (e.target.textContent = "copy"), 1500);
+});
 </script>
 </body>
 </html>
