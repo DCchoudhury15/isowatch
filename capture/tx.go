@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -228,7 +229,7 @@ func (t *Tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandT
 	switch p.Kind {
 	case rewrite.Forbidden:
 		return pgconn.CommandTag{}, ErrTxControl
-	case rewrite.Read, rewrite.Write:
+	case rewrite.Read, rewrite.AggRead, rewrite.Write:
 		rows, err := t.query(ctx, sql, run, runArgs, p)
 		if err != nil {
 			return pgconn.CommandTag{}, err
@@ -257,7 +258,7 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 	switch p.Kind {
 	case rewrite.Forbidden:
 		return nil, ErrTxControl
-	case rewrite.Read, rewrite.Write:
+	case rewrite.Read, rewrite.AggRead, rewrite.Write:
 		return t.query(ctx, sql, run, runArgs, p)
 	}
 	if p.Kind == rewrite.Untracked {
@@ -325,6 +326,10 @@ func (t *Tx) Rollback(ctx context.Context) error {
 
 // record turns the hidden column values of one row into reads or writes.
 func (t *Tx) record(p *rewrite.Plan, stmt, q int, hidden [][]byte) {
+	if p.Kind == rewrite.AggRead {
+		t.recordAggregate(p.Groups[0].Table, stmt, q, hidden[0])
+		return
+	}
 	pos := 0
 	for _, g := range p.Groups {
 		n := 1 + len(g.Table.PK)
@@ -359,6 +364,37 @@ func (t *Tx) record(p *rewrite.Plan, stmt, q int, hidden [][]byte) {
 			}
 			t.txn.Writes = append(t.txn.Writes, w)
 		}
+	}
+}
+
+// recordAggregate turns the JSON list of [xmin, pk...] rows an aggregate read
+// into reads. A value we cannot parse is skipped: missing a read can only
+// hide an anomaly, never invent one.
+func (t *Tx) recordAggregate(tbl *rewrite.Table, stmt, q int, raw []byte) {
+	if raw == nil {
+		return
+	}
+	var rowsRead [][]*string
+	if err := json.Unmarshal(raw, &rowsRead); err != nil {
+		return
+	}
+	for _, r := range rowsRead {
+		if len(r) != 1+len(tbl.PK) {
+			continue
+		}
+		vals := make([][]byte, len(r))
+		for i, v := range r {
+			if v != nil {
+				vals[i] = []byte(*v)
+			}
+		}
+		x, key, ok := t.decode(vals)
+		if !ok || t.txn.Owns(x) {
+			continue
+		}
+		t.txn.Reads = append(t.txn.Reads, history.Read{
+			Table: tbl.QualifiedName(), Key: key, Xmin: x, Stmt: stmt, Q: q,
+		})
 	}
 }
 

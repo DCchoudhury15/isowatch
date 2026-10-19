@@ -207,7 +207,7 @@ All of these were measured against a real PostgreSQL 18. See [Results](docs/resu
 
 IsoWatch is careful: when it is not sure it can rewrite a query safely, it runs the query unchanged and simply does not track it. That can cause a missed anomaly, but never a false alarm and never a broken query.
 
-It does not yet track reads inside aggregates (`count(*)`, `sum(...)`), `GROUP BY`, `DISTINCT`, `UNION`, `WITH` queries, subqueries, `MERGE`, batches or `COPY`. It needs PostgreSQL 18 or newer and the pgx v5 driver. Read the full list: [Limitations](docs/limitations.md)
+Simple aggregates over one table, like `SELECT count(*) FROM doctors WHERE on_call`, are tracked. It does not yet track aggregates over joins, `GROUP BY`, `DISTINCT`, `UNION`, `WITH` queries, subqueries, `MERGE`, batches or `COPY`. It needs PostgreSQL 18 or newer and the pgx v5 driver. Read the full list: [Limitations](docs/limitations.md)
 
 ## Is this new?
 

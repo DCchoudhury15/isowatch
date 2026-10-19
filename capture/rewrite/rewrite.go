@@ -5,6 +5,15 @@
 //
 //	alias.xmin::text, alias.pk1::text, ...
 //
+// For an aggregate SELECT over one watched table (for example
+// SELECT count(*) FROM doctors WHERE on_call) it appends one column holding
+// every row the aggregate read, from a subquery with the same FROM and WHERE:
+//
+//	(SELECT coalesce(json_agg(json_build_array(t.xmin::text, t.pk1::text, ...)), '[]') FROM t WHERE ...)::text
+//
+// The subquery is part of the same statement, so PostgreSQL runs it on the
+// same snapshot and it reports exactly the versions the aggregate saw.
+//
 // For INSERT, UPDATE and DELETE on a watched table it appends to RETURNING
 // (this needs PostgreSQL 18 or newer):
 //
@@ -52,6 +61,9 @@ const (
 	Untracked Kind = iota
 	// Read: a SELECT with hidden version columns.
 	Read
+	// AggRead: an aggregate SELECT with one hidden column listing the rows it read
+	// as a JSON array of [xmin, pk...] arrays.
+	AggRead
 	// Write: an INSERT, UPDATE or DELETE with hidden RETURNING columns.
 	Write
 	// Savepoint, Release, RollbackTo: savepoint commands to track.
@@ -280,12 +292,12 @@ func planSelect(s *pg_query.SelectStmt, cat Catalog) *Plan {
 	}
 	for _, t := range s.TargetList {
 		if hasAggregate(t) {
-			return &Plan{Kind: Untracked, Reason: "aggregate or window function"}
+			return planAggregate(s, cat)
 		}
 	}
 	for _, o := range s.SortClause {
 		if hasAggregate(o) {
-			return &Plan{Kind: Untracked, Reason: "aggregate in ORDER BY"}
+			return planAggregate(s, cat)
 		}
 	}
 
@@ -361,4 +373,105 @@ func Normalize(sql string) string {
 		return ""
 	}
 	return n
+}
+
+// volatile functions give a different answer each time they run. The hidden
+// subquery evaluates the WHERE clause a second time, so with one of these it
+// could list rows the aggregate did not read. Such queries are not tracked.
+var volatile = map[string]bool{
+	"random": true, "random_normal": true, "setseed": true, "nextval": true,
+	"setval": true, "clock_timestamp": true, "timeofday": true,
+	"gen_random_uuid": true, "uuidv4": true, "uuidv7": true,
+	"uuid_generate_v1": true, "uuid_generate_v1mc": true, "uuid_generate_v4": true,
+	"pg_sleep": true, "txid_current": true, "pg_current_xact_id": true,
+}
+
+// funcCalls reports whether m contains a window function, an aggregate FILTER,
+// or a call to a volatile function.
+func funcCalls(m proto.Message) (window, filter, vol bool) {
+	var walk func(protoreflect.Message)
+	walk = func(msg protoreflect.Message) {
+		if fc, ok := msg.Interface().(*pg_query.FuncCall); ok {
+			if fc.Over != nil {
+				window = true
+			}
+			if fc.AggFilter != nil {
+				filter = true
+			}
+			if n := len(fc.Funcname); n > 0 {
+				if s := fc.Funcname[n-1].GetString_(); s != nil && volatile[strings.ToLower(s.Sval)] {
+					vol = true
+				}
+			}
+		}
+		msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			switch {
+			case fd.IsList() && fd.Message() != nil:
+				l := v.List()
+				for i := 0; i < l.Len(); i++ {
+					walk(l.Get(i).Message())
+				}
+			case fd.Message() != nil && !fd.IsMap():
+				walk(v.Message())
+			}
+			return true
+		})
+	}
+	walk(m.ProtoReflect())
+	return
+}
+
+// quoteIdent quotes an identifier for use in SQL text.
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// planAggregate handles a SELECT whose result is computed from aggregates.
+// Only the simplest shape is tracked: one watched table directly in FROM, no
+// window functions, no FILTER, nothing volatile. Everything else stays
+// untracked, as the package rule says.
+func planAggregate(s *pg_query.SelectStmt, cat Catalog) *Plan {
+	if len(s.FromClause) != 1 || s.FromClause[0].GetRangeVar() == nil {
+		return &Plan{Kind: Untracked, Reason: "aggregate over a join or subquery"}
+	}
+	rv := s.FromClause[0].GetRangeVar()
+	tbl, ok := lookup(rv, cat)
+	if !ok {
+		return &Plan{Kind: Untracked, Reason: "no watched table"}
+	}
+	if aliasIsOldOrNew(rv) {
+		return &Plan{Kind: Untracked, Reason: "table alias named old or new"}
+	}
+	window, filter, vol := funcCalls(s)
+	switch {
+	case window:
+		return &Plan{Kind: Untracked, Reason: "aggregate or window function"}
+	case filter:
+		return &Plan{Kind: Untracked, Reason: "aggregate with FILTER"}
+	case vol:
+		return &Plan{Kind: Untracked, Reason: "volatile function in an aggregate query"}
+	}
+
+	// Build the subquery from a template, then put copies of the real FROM
+	// and WHERE into it.
+	ref := quoteIdent(refName(rv))
+	cols := []string{ref + `."xmin"::text`}
+	for _, pk := range tbl.PK {
+		cols = append(cols, ref+"."+quoteIdent(pk)+"::text")
+	}
+	tmpl := "SELECT (SELECT coalesce(json_agg(json_build_array(" + strings.Join(cols, ", ") +
+		")), '[]'::json) FROM placeholder)::text AS " + hiddenName(0)
+	tt, err := pg_query.Parse(tmpl)
+	if err != nil {
+		return &Plan{Kind: Untracked, Reason: "aggregate template error"}
+	}
+	target := tt.Stmts[0].Stmt.GetSelectStmt().TargetList[0]
+	cast := target.GetResTarget().Val.GetTypeCast()
+	sub := cast.Arg.GetSubLink().Subselect.GetSelectStmt()
+	sub.FromClause = []*pg_query.Node{proto.Clone(s.FromClause[0]).(*pg_query.Node)}
+	if s.WhereClause != nil {
+		sub.WhereClause = proto.Clone(s.WhereClause).(*pg_query.Node)
+	}
+	s.TargetList = append(s.TargetList, target)
+	return &Plan{Kind: AggRead, Groups: []Group{{Table: tbl}}, Hidden: 1}
 }
