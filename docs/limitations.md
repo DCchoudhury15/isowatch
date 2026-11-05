@@ -16,7 +16,8 @@ Because of that rule, everything below can make IsoWatch **miss** an anomaly. No
 
 | Statement | Why |
 |---|---|
-| `SELECT` with aggregates (`count`, `sum`, ...), `GROUP BY`, `HAVING`, `DISTINCT`, window functions | Adding a plain column would break the query |
+| `SELECT` with `GROUP BY`, `HAVING`, `DISTINCT` or window functions | Adding a plain column would break the query |
+| Aggregates (`count`, `sum`, ...) over a join or subquery, with `FILTER`, or with a volatile function such as `random()` in `WHERE` | See "Aggregates" below |
 | `SELECT` with `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `VALUES`, `SELECT INTO` | Table names may refer to something else; kept simple on purpose |
 | Watched tables inside subqueries, or behind a join that has its own alias | Only tables directly in `FROM` (including plain joins) are tracked |
 | `MERGE` | Not supported yet |
@@ -29,10 +30,23 @@ Because of that rule, everything below can make IsoWatch **miss** an anomaly. No
 
 ## Anomalies it cannot see yet
 
-* **Predicate reads.** "Count the doctors on call" with `SELECT count(*)` is not tracked. Selecting the rows themselves (`SELECT id FROM doctors WHERE on_call`) is tracked, and that is enough for the classic write skew. A row **inserted** by someone else that would have matched your `WHERE` (a phantom) is not seen.
+* **Phantoms.** "Count the doctors on call" is tracked (see "Aggregates" below), and so is selecting the rows themselves. Both record the rows that matched your `WHERE` at that moment. A row **inserted** by someone else that would have matched (a phantom) is not seen.
 * **Anomalies across separate transactions** of one request are only found with `group_by: trace` in the collector, or `checker.ByTrace` in your app. By default each database transaction is checked on its own.
 * **Very long transactions.** Transactions are forgotten after the window (2 minutes by default). A cycle with a transaction older than that is missed. Set the window longer than your longest transaction.
 * **The first occurrence.** IsoWatch has to see an anomaly before it can report it or protect against it, so the first one always happens. Run it in staging and load tests too, so most problems are found before production.
+
+## Aggregates
+
+An aggregate over one watched table, like `SELECT count(*) FROM doctors WHERE on_call`, is tracked by adding one hidden column: a subquery with the same `FROM` and `WHERE` that lists the version of every row the aggregate read. It is part of the same statement, so PostgreSQL runs it on the same snapshot.
+
+That is only safe when running the `WHERE` clause twice gives the same rows, so these shapes stay untracked:
+
+* aggregates over a join or a subquery,
+* `FILTER (WHERE ...)`, which reads rows it then ignores,
+* a volatile function (`random()`, `nextval()`, `clock_timestamp()`, ...) anywhere in the query,
+* `GROUP BY`, `HAVING`, `DISTINCT` and window functions.
+
+The hidden column lists every matching row, so a `count(*)` over a very large table makes the result bigger. Watch only the tables where races matter.
 
 ## Protection
 

@@ -337,6 +337,89 @@ func TestDetectsWriteSkew(t *testing.T) {
 	}
 }
 
+// The same write skew, written the way most apps write it: count the doctors
+// still on call, then go off call if there is someone else.
+func TestDetectsWriteSkewThroughCount(t *testing.T) {
+	for _, iso := range []pgx.TxIsoLevel{pgx.ReadCommitted, pgx.RepeatableRead, pgx.Serializable} {
+		t.Run(string(iso), func(t *testing.T) {
+			pool := testPool(t)
+			ctx := context.Background()
+			docs := table(t, pool, "id text PRIMARY KEY, on_call bool")
+			pool.Exec(ctx, fmt.Sprintf("INSERT INTO %s VALUES ('alice', true), ('bob', true), ('carol', false)", docs))
+			m, col := monitor(t, pool, docs)
+
+			onCall := func(tx *Tx) int {
+				var n int
+				if err := tx.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE on_call", docs)).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+			a, _ := m.Begin(ctx, pool, pgx.TxOptions{IsoLevel: iso})
+			b, _ := m.Begin(ctx, pool, pgx.TxOptions{IsoLevel: iso})
+			if onCall(a) != 2 || onCall(b) != 2 {
+				t.Fatal("both should count two doctors on call")
+			}
+			a.Exec(ctx, fmt.Sprintf("UPDATE %s SET on_call = false WHERE id = 'alice'", docs))
+			b.Exec(ctx, fmt.Sprintf("UPDATE %s SET on_call = false WHERE id = 'bob'", docs))
+			errA := a.Commit(ctx)
+			errB := b.Commit(ctx)
+
+			got := col.all()
+			if iso == pgx.Serializable {
+				if errA == nil && errB == nil {
+					t.Fatal("serializable should reject one of them")
+				}
+				if len(got) != 0 {
+					t.Fatalf("no anomaly expected at serializable, got %+v", got)
+				}
+				return
+			}
+			if errA != nil || errB != nil {
+				t.Fatalf("both commit at %s: %v %v", iso, errA, errB)
+			}
+			if len(got) != 1 || got[0].Kind != checker.WriteSkew || got[0].Unexpected {
+				t.Fatalf("want 1 expected write skew, got %+v", got)
+			}
+		})
+	}
+}
+
+// Counting rows and then touching only rows nobody else changed is not an
+// anomaly, and the aggregate tracking must stay quiet about it.
+func TestCountWithoutConflictStaysQuiet(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	docs := table(t, pool, "id text PRIMARY KEY, on_call bool")
+	pool.Exec(ctx, fmt.Sprintf("INSERT INTO %s VALUES ('alice', true), ('bob', true), ('carol', false)", docs))
+	m, col := monitor(t, pool, docs)
+
+	for i, who := range []string{"alice", "bob"} {
+		tx, _ := m.Begin(ctx, pool, pgx.TxOptions{})
+		var n int
+		// A parameter in WHERE is used twice: by the count and by the hidden subquery.
+		if err := tx.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE on_call = $1", docs), true).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if want := 2 - i; n != want { // alice went off call first
+			tx.Rollback(ctx)
+			t.Fatalf("count = %d, want %d", n, want)
+		}
+		if _, err := tx.Exec(ctx, fmt.Sprintf("UPDATE %s SET on_call = NOT on_call WHERE id = $1", docs), who); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := col.all(); len(got) != 0 {
+		t.Fatalf("one after the other is serializable, got %+v", got)
+	}
+	if s := m.Stats(); s.Untracked != 0 {
+		t.Fatalf("count(*) should be tracked now, stats %+v", s)
+	}
+}
+
 func TestSavepointRollbackForgetsWrites(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
