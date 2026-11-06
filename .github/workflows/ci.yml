@@ -1,12 +1,58 @@
+# Checks every push and pull request. The release workflow calls this file
+# too (workflow_call), so a release is only built from a commit that passes
+# all of these checks.
 name: ci
 
 on:
   push:
+    # Branches only. A version tag runs release.yml, which calls this file.
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  checks:
+    name: Format, vet, unit tests, examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Modules are tidy
+        run: |
+          for mod in $(git ls-files -- go.mod '*/go.mod'); do
+            dir="$(dirname "$mod")"
+            echo "go mod tidy -diff in $dir"
+            (cd "$dir" && go mod tidy -diff)
+          done
+      - name: Vet
+        run: |
+          for mod in $(git ls-files -- go.mod '*/go.mod'); do
+            dir="$(dirname "$mod")"
+            echo "go vet in $dir"
+            (cd "$dir" && go vet ./...)
+          done
+      - name: Unit tests (root module and processor)
+        run: make test
+      - name: Examples build
+        run: cd examples/bank && go build ./...
+
+  postgres:
+    name: Tests with PostgreSQL 18
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -24,39 +70,26 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
-      - name: Formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
-      - name: Vet
-        run: |
-          go vet ./...
-          (cd processor/isowatchprocessor && go vet ./...)
-          (cd examples/bank && go vet ./...)
-      - name: Tests (including real PostgreSQL 18)
-        env:
-          ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
-        run: go test -race -count=1 ./...
-      - name: Processor tests (including real PostgreSQL 18)
-        env:
-          ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
-        run: cd processor/isowatchprocessor && go test -race -count=1 ./...
-      - name: Demo builds and its isowatchtest tests pass
-        env:
-          ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
-        run: cd examples/bank && go build ./... && go test -race -count=1 ./...
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: All tests, including real PostgreSQL 18
+        run: make test-db TEST_DSN=postgres://postgres:postgres@localhost:5432/postgres
 
   collector:
+    name: Collector build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
       - name: Build the collector
         run: make collector
       - name: Check the example configs
         run: |
           ./collector/build/isowatch-collector validate --config collector/config.yaml
           ./collector/build/isowatch-collector validate --config collector/config.docker.yaml
+          ./collector/build/isowatch-collector validate --config docker/collector-config.yaml
       - name: Alert rules
         run: make test-alerts
