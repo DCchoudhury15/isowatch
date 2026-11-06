@@ -2,10 +2,14 @@ module github.com/DCchoudhury15/isowatch/processor/isowatchprocessor
 
 go 1.26.4
 
+// For work inside this repository only. Go ignores replace lines in
+// modules used as dependencies, so users of this module get the root
+// module version named in require below. Keep it at a tagged version.
+// See RELEASING.md.
 replace github.com/DCchoudhury15/isowatch => ../..
 
 require (
-	github.com/DCchoudhury15/isowatch v0.0.0-00010101000000-000000000000
+	github.com/DCchoudhury15/isowatch v0.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 	go.opentelemetry.io/collector/component v1.68.0
 	go.opentelemetry.io/collector/component/componenttest v0.162.0

@@ -2,10 +2,11 @@ module github.com/DCchoudhury15/isowatch/examples/bank
 
 go 1.26.4
 
+// The demo always builds against the code in this repository.
 replace github.com/DCchoudhury15/isowatch => ../..
 
 require (
-	github.com/DCchoudhury15/isowatch v0.0.0-00010101000000-000000000000
+	github.com/DCchoudhury15/isowatch v0.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
