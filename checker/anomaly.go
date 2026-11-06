@@ -3,6 +3,7 @@ package checker
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DCchoudhury15/isowatch/history"
 )
@@ -300,15 +301,45 @@ func baseRead(t *history.Txn, w *history.Write, row history.Version) *history.Re
 	return seen
 }
 
+// basedOn is baseRead for a write by transaction t in node n. In ByTrace
+// mode a request can read a row in one transaction and write it in a later
+// one (for example two statements run outside a transaction). When t did
+// not read the row itself, the last read of the row by a transaction of the
+// same request that committed before t started counts as the base. A read
+// that may have overlapped t is not used: missing a base read can only make
+// counts smaller, never invent an anomaly.
+func (c *Checker) basedOn(n *node, t *history.Txn, w *history.Write, row history.Version) *history.Read {
+	if r := baseRead(t, w, row); r != nil || n == nil || c.opts.GroupBy != ByTrace || len(n.txns) < 2 {
+		return r
+	}
+	var best *history.Read
+	var bestAt time.Time
+	for _, o := range n.txns {
+		if o == t || o.Commit.IsZero() || o.Commit.After(t.Start) {
+			continue
+		}
+		for i := range o.Reads {
+			r := &o.Reads[i]
+			if r.Table != row.Table || r.Key != row.Key {
+				continue
+			}
+			if best == nil || o.Commit.After(bestAt) || (o.Commit.Equal(bestAt) && r.Stmt > best.Stmt) {
+				best, bestAt = r, o.Commit
+			}
+		}
+	}
+	return best
+}
+
 // skippedRange returns the versions a write replaced without seeing: every
 // version after the one it read, up to and including the one it replaced.
 // It returns nil when the write was up to date or blind.
-func (c *Checker) skippedRange(t *history.Txn, w *history.Write) []history.Version {
+func (c *Checker) skippedRange(n *node, t *history.Txn, w *history.Write) []history.Version {
 	replaced, ok := w.Replaced()
 	if !ok || t.Owns(replaced.Xmin) {
 		return nil
 	}
-	seen := baseRead(t, w, replaced)
+	seen := c.basedOn(n, t, w, replaced)
 	if seen == nil || seen.Xmin == replaced.Xmin {
 		return nil
 	}
@@ -340,7 +371,7 @@ func (c *Checker) skippedIn(cyc []Edge) int {
 		}
 		for _, t := range n.txns {
 			for i := range t.Writes {
-				if k := len(c.skippedRange(t, &t.Writes[i])); k > best {
+				if k := len(c.skippedRange(n, t, &t.Writes[i])); k > best {
 					best = k
 				}
 			}
@@ -371,7 +402,7 @@ func (c *Checker) LostWrites() int {
 		for _, t := range n.txns {
 			for i := range t.Writes {
 				w := &t.Writes[i]
-				for _, v := range c.skippedRange(t, w) {
+				for _, v := range c.skippedRange(n, t, w) {
 					skipped[v.String()] = true
 				}
 				if created, ok := w.Created(); ok {
@@ -380,7 +411,7 @@ func (c *Checker) LostWrites() int {
 					}
 				} else if old, ok := w.Replaced(); ok {
 					// A delete: what it was based on survived until it.
-					if r := baseRead(t, w, old); r != nil {
+					if r := c.basedOn(n, t, w, old); r != nil {
 						starts = append(starts, r.Version())
 					}
 				}
@@ -406,7 +437,7 @@ func (c *Checker) LostWrites() int {
 			if !ok {
 				break
 			}
-			r := baseRead(ref.txn, ref.write, old)
+			r := c.basedOn(c.nodes[ref.node], ref.txn, ref.write, old)
 			if r == nil {
 				break // blind write: it was not based on anything
 			}
