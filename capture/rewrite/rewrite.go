@@ -93,14 +93,47 @@ type Plan struct {
 	// SetsIsolation is true for SET TRANSACTION style statements. After one,
 	// IsoWatch no longer trusts the isolation level it was given.
 	SetsIsolation bool
+	// Watched is true when the statement reads or writes a watched table
+	// anywhere, including inside subqueries and CTEs. Tracked statements
+	// always have it. It is used for coverage counts only. A statement that
+	// cannot be parsed has it too, because IsoWatch cannot tell.
+	Watched bool
+	// Normalized is the original SQL with literal values replaced by $1,
+	// $2, ... It is set when Watched is true and the SQL can be normalized.
+	Normalized string
 }
+
+// Generic reasons that Make replaces with a more precise one when the
+// statement uses a watched table.
+const (
+	reasonNoWatched     = "no watched table"
+	reasonStatementType = "statement type not tracked"
+)
 
 // Make plans one SQL string.
 func Make(sql string, cat Catalog) *Plan {
 	tree, err := pg_query.Parse(sql)
 	if err != nil {
-		return &Plan{Kind: Untracked, SQL: sql, Reason: "parse error"}
+		return &Plan{Kind: Untracked, SQL: sql, Reason: "parse error", Watched: true}
 	}
+	// Look for watched tables before planning, which changes the tree.
+	watched := usesWatched(tree, cat)
+	p := makeFromTree(sql, tree, cat)
+	if p.Kind == Read || p.Kind == AggRead || p.Kind == Write {
+		watched = true
+	}
+	if watched {
+		p.Watched = true
+		p.Normalized = Normalize(sql)
+		if p.Kind == Untracked && len(tree.Stmts) == 1 {
+			p.Reason = refineReason(tree.Stmts[0].Stmt, p.Reason)
+		}
+	}
+	return p
+}
+
+// makeFromTree plans a parsed SQL string. It may change the tree.
+func makeFromTree(sql string, tree *pg_query.ParseResult, cat Catalog) *Plan {
 	if len(tree.Stmts) != 1 {
 		return &Plan{Kind: Untracked, SQL: sql, Reason: "multiple statements"}
 	}
