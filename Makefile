@@ -5,6 +5,8 @@ PG_PORT ?= 55432
 TEST_DSN ?= postgres://postgres:postgres@localhost:$(PG_PORT)/postgres
 PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
 BUILDER ?= $(shell go env GOPATH)/bin/builder
+# Version printed by "isowatch-collector --version". Releases set it.
+VERSION ?= 0.0.0-dev
 
 .PHONY: help test test-db test-alerts db db-stop collector clean demo-up demo-load demo-down
 
@@ -32,7 +34,7 @@ test-alerts: ## Check and unit-test the Prometheus alert rules (needs Docker)
 
 collector: ## Build the collector with the IsoWatch processor into collector/build
 	@test -x $(BUILDER) || go install go.opentelemetry.io/collector/cmd/builder@v0.162.0
-	sed "s|REPO_DIR|$(REPO_DIR)|g" collector/builder-config.yaml > collector/.builder.yaml
+	sed -e "s|REPO_DIR|$(REPO_DIR)|g" -e "s|DIST_VERSION|$(VERSION)|g" collector/builder-config.yaml > collector/.builder.yaml
 	cd collector && $(BUILDER) --config=.builder.yaml
 
 demo-up: ## Start PostgreSQL, Jaeger, the collector and the demo in Docker

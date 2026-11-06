@@ -1,0 +1,51 @@
+# Default config inside the isowatch-collector image. It receives OTLP from
+# your apps, checks the IsoWatch transaction spans, prints anomalies and
+# serves the isowatch_* metrics.
+# To send them on to Jaeger, SigNoz, Grafana Tempo or any OTLP backend,
+# mount your own file over /etc/isowatch/config.yaml (see docs/install.md).
+extensions:
+  # GET http://<host>:13133/ returns 200 when the collector is ready.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # IsoWatch must see transactions before batching or sampling drops any.
+  isowatch:
+    window: 2m
+    group_by: transaction
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      # Print every anomaly, not only the first 10 per second.
+      sampling:
+        enabled: false
+    # The isowatch_* metrics, at http://<host>:8888/metrics. The collector's
+    # default is localhost, which cannot be reached from outside a container.
+    # See docs/alerts.md.
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [isowatch, batch]
+      exporters: [debug]
