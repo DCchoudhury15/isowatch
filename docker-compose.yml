@@ -26,6 +26,9 @@ services:
     build:
       context: .
       dockerfile: docker/collector.Dockerfile
+    volumes:
+      # The image's own config only prints anomalies. This one also sends them to Jaeger.
+      - ./collector/config.docker.yaml:/etc/isowatch/config.yaml:ro
     depends_on:
       - jaeger
 
