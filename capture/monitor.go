@@ -21,13 +21,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/DCchoudhury15/isowatch/capture/rewrite"
+	"github.com/DCchoudhury15/isowatch/protection"
 )
 
 // KeyMode decides how primary key values are stored.
@@ -55,6 +58,16 @@ type Config struct {
 	// MaxRetries is how many times Do retries a protected transaction that
 	// PostgreSQL rejected with a serialization failure. Default: 20.
 	MaxRetries int
+	// ProtectionStore keeps protected names where every replica (and the
+	// IsoWatch collector) can read and write them, for example
+	// protection.NewPostgres(pool, ""). See Monitor.Protect. Default: none,
+	// so protection lives in the memory of this process only.
+	ProtectionStore protection.Store
+	// ProtectionPoll is how often the store is read. Default: 5s.
+	ProtectionPoll time.Duration
+	// Logger receives problems IsoWatch works around without failing your
+	// app, such as a protection store it cannot reach. Default: none.
+	Logger *slog.Logger
 }
 
 // Querier is the small part of pgx (Conn or Pool) that New needs.
@@ -90,6 +103,7 @@ type Monitor struct {
 	reasonMu                               sync.Mutex
 	protected                              sync.Map // name -> struct{}
 	reasons                                map[string]int64
+	prot                                   *protector // set when Config.ProtectionStore is used
 }
 
 // ErrUnsupportedServer is returned when PostgreSQL is older than 18.
@@ -150,6 +164,9 @@ func New(ctx context.Context, db Querier, cfg Config) (*Monitor, error) {
 		}
 		t := &rewrite.Table{Schema: schema, Name: rel, PK: pk, Unqualified: unqualified}
 		m.tables[t.QualifiedName()] = t
+	}
+	if err := m.startProtection(ctx); err != nil {
+		return nil, err
 	}
 	return m, nil
 }
