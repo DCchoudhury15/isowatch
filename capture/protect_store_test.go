@@ -50,6 +50,7 @@ type fakeStore struct {
 	err      error         // every call fails
 	writeErr error         // Add and Remove fail, List works
 	block    chan struct{} // if set, Add waits for it to be closed
+	failed   int           // writes that failed
 }
 
 func newFakeStore(names ...string) *fakeStore {
@@ -80,6 +81,7 @@ func (s *fakeStore) Add(ctx context.Context, name, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := cmpErr(s.err, s.writeErr); err != nil {
+		s.failed++
 		return err
 	}
 	if _, ok := s.names[name]; !ok {
@@ -200,11 +202,13 @@ func TestProtectWritesToStoreInTheBackground(t *testing.T) {
 	store := newFakeStore()
 	m := storeMonitor(t, store, time.Hour, nil)
 	block := make(chan struct{})
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(block) }) }) // runs before m.Close
 	store.mu.Lock()
 	store.block = block
 	store.mu.Unlock()
 
-	done := make(chan []string)
+	done := make(chan []string, 1)
 	go func() { done <- m.Protect("deposit") }()
 	select {
 	case added := <-done:
@@ -214,7 +218,7 @@ func TestProtectWritesToStoreInTheBackground(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Protect waited for the store; it must never block the caller")
 	}
-	close(block)
+	release.Do(func() { close(block) })
 	eventually(t, 2*time.Second, "store gets the name", func() bool {
 		_, ok := store.has("deposit")
 		return ok
@@ -312,7 +316,21 @@ func TestPendingWritesWinOverStaleReads(t *testing.T) {
 func TestCloseWritesPendingNames(t *testing.T) {
 	store := newFakeStore()
 	m := storeMonitor(t, store, time.Hour, nil)
+	store.mu.Lock()
+	store.writeErr = errors.New("down")
+	store.mu.Unlock()
 	m.Protect("a", "b", "c")
+	// Wait until the background round started by Protect has failed all
+	// three writes. With no poll during the test, only Close can retry them.
+	eventually(t, 2*time.Second, "first writes fail", func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return store.failed >= 3
+	})
+	time.Sleep(20 * time.Millisecond)
+	store.mu.Lock()
+	store.writeErr = nil
+	store.mu.Unlock()
 	m.Close()
 	for _, n := range []string{"a", "b", "c"} {
 		if _, ok := store.has(n); !ok {
