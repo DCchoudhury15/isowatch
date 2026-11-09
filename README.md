@@ -153,6 +153,20 @@ Names appear in alerts, can be ignored, and are what protection works on.
 | In your app | `capture.NewCheckerSink(...)` | Tests, staging, small services |
 | In the collector | `capture.NewOTelSink(nil)` + the IsoWatch collector | Production, many services, alerts in your tracing tool |
 
+## Catch races in `go test`
+
+The `isowatchtest` package fails a test when IsoWatch sees a race really happen. Run your code a few times at once and the test tells you which SQL raced and how to fix it:
+
+```go
+m := isowatchtest.New(t, pool, isowatchtest.Tables("accounts"))
+isowatchtest.Concurrently(t, 20, func(i int) error {
+    return m.Do(t.Context(), pool, pgx.TxOptions{}, deposit, capture.WithName("deposit"))
+})
+// the test fails at the end if any deposit was lost
+```
+
+Only the test database needs PostgreSQL 18. Read more: [Testing with IsoWatch](docs/testing.md)
+
 ## From finding to fixing: protection
 
 PostgreSQL's SERIALIZABLE level prevents all of these anomalies, but it costs retries, so most apps do not use it everywhere. IsoWatch can apply it **only where it has seen a problem**:
@@ -225,6 +239,7 @@ Checking for isolation anomalies is a well studied research area. IsoWatch does 
 | `checker/` | Builds the dependency graph and finds anomalies (no outside dependencies) |
 | `capture/` | The pgx wrapper your app uses |
 | `capture/rewrite/` | Adds the hidden version columns to SQL |
+| `isowatchtest/` | Fail `go test` when a race really happens |
 | `processor/isowatchprocessor/` | The OpenTelemetry Collector processor |
 | `collector/` | Config to build and run the collector |
 | `examples/bank/` | The demo service and load generator |

@@ -302,6 +302,27 @@ func TestExpectNoAnomaliesNeedsTransactions(t *testing.T) {
 	mustContain(t, ft.all(), "has not checked any transaction", "m.Do or m.Begin")
 }
 
+// ExpectNoAnomalies fails right away, even for a kind the test said it
+// expected earlier: it checks that nothing at all went wrong up to here.
+func TestExpectNoAnomaliesFailsNowEvenIfExpected(t *testing.T) {
+	pool := testPool(t)
+	var failedBeforeCleanup bool
+	ft := runFake(t, func(ft *fakeT) {
+		m := isowatchtest.New(ft, pool, isowatchtest.Tables("accounts"))
+		m.ExpectAnomaly(isowatchtest.LostUpdate)
+		isowatchtest.Concurrently(ft, 8, deposit(context.Background(), m, pool, ""))
+		if m.LostWrites() == 0 {
+			ft.Fatal("the race did not happen, so this test checks nothing")
+		}
+		m.ExpectNoAnomalies()
+		failedBeforeCleanup = ft.Failed()
+	})
+	if !failedBeforeCleanup {
+		t.Fatalf("ExpectNoAnomalies passed although IsoWatch saw lost updates:\n%s", ft.all())
+	}
+	mustContain(t, ft.all(), "and the test expects none", "lost-update")
+}
+
 // Calls that share one trace (for example a test wrapped in one span) must
 // still be checked against each other. With trace grouping as the default,
 // they would be one node and the race would be hidden.
