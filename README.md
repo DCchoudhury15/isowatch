@@ -153,6 +153,8 @@ Names appear in alerts, can be ignored, and are what protection works on.
 | In your app | `capture.NewCheckerSink(...)` | Tests, staging, small services |
 | In the collector | `capture.NewOTelSink(nil)` + the IsoWatch collector | Production, many services, alerts in your tracing tool |
 
+If your app samples traces, use `capture.NewOTLPSink(...)` instead of `NewOTelSink`. It sends every transaction to the collector, whatever your sampler decides, so anomalies are not missed. See [Running in production](docs/production.md).
+
 ## Catch races in `go test`
 
 The `isowatchtest` package fails a test when IsoWatch sees a race really happen. Run your code a few times at once and the test tells you which SQL raced and how to fix it:
@@ -182,6 +184,8 @@ mon, _ = capture.New(ctx, pool, capture.Config{Tables: []string{"accounts"}, Sin
 After that, `Do` runs those named transactions at SERIALIZABLE and retries them when PostgreSQL asks (error 40001). Everything else keeps running at full speed. You can also call `mon.Protect("deposit")` yourself.
 
 In the tests, the same buggy counter lost 16 increments before IsoWatch protected it, then **0 out of the next 640**. Be aware: the first anomaly still happens (IsoWatch has to see it), retries cost time on very hot rows, and `fn` may run more than once, so it must not send emails or call other services before it commits.
+
+With many replicas, give the Monitor a shared store: make one with `protection.NewPostgres` and set it as `Config.ProtectionStore`. Then a name protected on one replica reaches every replica within seconds and survives restarts. See [Running in production](docs/production.md#2-share-protection-across-replicas).
 
 ## Ignoring what you accept
 
@@ -239,6 +243,7 @@ Checking for isolation anomalies is a well studied research area. IsoWatch does 
 | `checker/` | Builds the dependency graph and finds anomalies (no outside dependencies) |
 | `capture/` | The pgx wrapper your app uses |
 | `capture/rewrite/` | Adds the hidden version columns to SQL |
+| `protection/` | The list of protected names, shared by every replica through PostgreSQL |
 | `isowatchtest/` | Fail `go test` when a race really happens |
 | `processor/isowatchprocessor/` | The OpenTelemetry Collector processor |
 | `collector/` | Config to build and run the collector |
