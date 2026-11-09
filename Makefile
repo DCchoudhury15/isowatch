@@ -8,7 +8,7 @@ BUILDER ?= $(shell go env GOPATH)/bin/builder
 # Version printed by "isowatch-collector --version". Releases set it.
 VERSION ?= 0.0.0-dev
 
-.PHONY: help test test-db test-alerts db db-stop collector clean demo-up demo-load demo-down
+.PHONY: help test test-db test-alerts db db-stop collector proxy clean demo-up demo-load demo-down
 
 help: ## Show this help
 	@grep -E "^[a-z-]+:.*##" $(MAKEFILE_LIST) | sed "s/:.*##/:/"
@@ -37,6 +37,9 @@ collector: ## Build the collector with the IsoWatch processor into collector/bui
 	sed -e "s|REPO_DIR|$(REPO_DIR)|g" -e "s|DIST_VERSION|$(VERSION)|g" collector/builder-config.yaml > collector/.builder.yaml
 	cd collector && $(BUILDER) --config=.builder.yaml
 
+proxy: ## Build the IsoWatch PostgreSQL proxy into build/isowatch-proxy
+	go build -ldflags "-X main.version=$(VERSION)" -o build/isowatch-proxy ./cmd/isowatch-proxy
+
 demo-up: ## Start PostgreSQL, Jaeger, the collector and the demo in Docker
 	docker compose up -d --build
 	@echo "Jaeger UI: http://localhost:16686   demo: http://localhost:8090/state"
@@ -48,4 +51,4 @@ demo-down: ## Stop the Docker demo
 	docker compose down
 
 clean: ## Remove build output
-	rm -rf collector/build collector/.builder.yaml
+	rm -rf collector/build collector/.builder.yaml build

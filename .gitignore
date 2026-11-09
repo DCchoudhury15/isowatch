@@ -1,4 +1,5 @@
 collector/build/
+/build/
 collector/.builder.yaml
 *.test
 *.out
