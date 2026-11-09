@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
 
 	"github.com/DCchoudhury15/isowatch/checker"
@@ -22,18 +24,28 @@ type isowatch struct {
 	cfg     *Config
 	next    consumer.Traces
 	checker *checker.Checker
+	issues  *issues
+	tel     *telemetry
+	hook    *webhook   // nil when no webhook is configured
+	prot    *protector // nil when protection is off
+	now     func() time.Time
+
+	// Lost writes are measured on the evict timer. See measureLostWrites.
+	lostDirty atomic.Bool
+	lostBase  int
+	lastSup   int64
 
 	stop chan struct{}
 	wg   sync.WaitGroup
 }
 
-func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) *isowatch {
+func newProcessor(set processor.Settings, cfg *Config, next consumer.Traces) (*isowatch, error) {
 	group := checker.ByTransaction
 	if cfg.GroupBy == "trace" {
 		group = checker.ByTrace
 	}
-	return &isowatch{
-		logger: logger,
+	p := &isowatch{
+		logger: set.Logger,
 		cfg:    cfg,
 		next:   next,
 		checker: checker.New(checker.Options{
@@ -43,11 +55,35 @@ func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) *isowat
 			IgnoreTables: cfg.IgnoreTables,
 			IgnoreNames:  cfg.IgnoreNames,
 		}),
-		stop: make(chan struct{}),
+		issues: newIssues(cfg),
+		now:    time.Now,
+		stop:   make(chan struct{}),
 	}
+	tel, err := newTelemetry(set.MeterProvider, p)
+	if err != nil {
+		return nil, err
+	}
+	p.tel = tel
+	if cfg.Webhook.URL != "" {
+		p.hook = newWebhook(cfg.Webhook, set.Logger, tel)
+	}
+	if cfg.Protection.DSN != "" {
+		if p.prot, err = newProtector(cfg.Protection, set.Logger, tel); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
 }
 
 func (p *isowatch) Start(context.Context, component.Host) error {
+	if p.prot != nil {
+		if err := p.prot.start(); err != nil {
+			return err
+		}
+	}
+	if p.hook != nil {
+		p.hook.w.start()
+	}
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -58,20 +94,80 @@ func (p *isowatch) Start(context.Context, component.Host) error {
 			case <-p.stop:
 				return
 			case now := <-tick.C:
-				p.checker.Evict(now)
+				p.tick(now)
 			}
 		}
 	}()
 	return nil
 }
 
-func (p *isowatch) Shutdown(context.Context) error {
+// tick runs on the evict timer: it measures lost writes, then forgets old
+// transactions.
+func (p *isowatch) tick(now time.Time) {
+	p.measureLostWrites(context.Background())
+	if p.checker.Evict(now) > 0 && p.lostBase > 0 {
+		// Some lost writes may have left the window with the transactions
+		// that were just forgotten. Start counting from what is left.
+		p.lostBase = p.checker.LostWrites()
+	}
+}
+
+// measureLostWrites adds new lost writes to isowatch_lost_writes and to the
+// issue they belong to.
+//
+// The checker counts lost writes over all transactions in its window, and
+// that count is expensive, so it is only taken after an anomaly was found.
+// The increase since the last measurement is the number of new lost writes.
+// It is labelled with the table when all issues seen since the last
+// measurement are on one table ("several" otherwise), and added to the
+// issue when there was only one. If an ignored anomaly happened in the same
+// interval, the increase may belong to an ignored table, so it is not
+// counted. This can make the number a little low, never high.
+func (p *isowatch) measureLostWrites(ctx context.Context) {
+	sup := p.checker.Stats().Suppressed
+	dirty := p.lostDirty.Swap(false)
+	if !dirty && sup == p.lastSup {
+		return
+	}
+	lost := p.checker.LostWrites()
+	active := p.issues.takeActive()
+	if dirty && sup == p.lastSup && lost > p.lostBase && len(active) > 0 {
+		n := int64(lost - p.lostBase)
+		tables := map[string]bool{}
+		for _, is := range active {
+			for _, t := range is.Tables {
+				tables[t] = true
+			}
+		}
+		label := "several"
+		if len(tables) == 1 {
+			for t := range tables {
+				label = t
+			}
+		}
+		p.tel.lost(ctx, label, n)
+		if len(active) == 1 {
+			p.issues.addLostWrites(active[0].ID, n)
+		}
+	}
+	p.lostBase = lost
+	p.lastSup = sup
+}
+
+func (p *isowatch) Shutdown(ctx context.Context) error {
 	select {
 	case <-p.stop:
 	default:
 		close(p.stop)
 	}
 	p.wg.Wait()
+	if p.hook != nil {
+		p.hook.w.shutdown(ctx)
+	}
+	if p.prot != nil {
+		p.prot.shutdown(ctx)
+	}
+	p.tel.shutdown()
 	return nil
 }
 
@@ -79,43 +175,96 @@ func (p *isowatch) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: true}
 }
 
-// found pairs an anomaly with the span that completed it.
+// found pairs an anomaly with the span it is reported under.
 type found struct {
 	anomaly checker.Anomaly
+	issue   seen
 	trace   pcommon.TraceID
 	parent  pcommon.SpanID
 }
 
 func (p *isowatch) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
 	var all []found
+	var txns, bad int64
+	drop := p.cfg.DropTxnSpans
 	rss := td.ResourceSpans()
 	for i := 0; i < rss.Len(); i++ {
 		sss := rss.At(i).ScopeSpans()
 		for j := 0; j < sss.Len(); j++ {
 			spans := sss.At(j).Spans()
+			hasTxn := false
 			for k := 0; k < spans.Len(); k++ {
 				span := spans.At(k)
 				if span.Name() != history.SpanName {
 					continue
 				}
+				hasTxn = true
 				txn, err := decode(span)
 				if err != nil {
+					bad++
 					p.logger.Debug("skipping bad isowatch span", zap.Error(err))
 					continue
 				}
+				// The anomaly span is a child of the isowatch.txn span. If
+				// that span is dropped, it hangs from the request span that
+				// ran the transaction instead, and links point there too.
+				parent := span.SpanID()
+				if drop {
+					parent = span.ParentSpanID()
+					txn.SpanID = ""
+					if !parent.IsEmpty() {
+						txn.SpanID = parent.String()
+					}
+				}
+				txns++
 				for _, a := range p.checker.Add(txn) {
-					all = append(all, found{anomaly: a, trace: span.TraceID(), parent: span.SpanID()})
+					s := p.observe(ctx, a)
+					if s.span {
+						all = append(all, found{anomaly: a, issue: s, trace: span.TraceID(), parent: parent})
+					}
 				}
 			}
-			if p.cfg.DropTxnSpans {
+			if drop && hasTxn {
 				spans.RemoveIf(func(s ptrace.Span) bool { return s.Name() == history.SpanName })
 			}
 		}
+		if drop {
+			sss.RemoveIf(func(ss ptrace.ScopeSpans) bool { return ss.Spans().Len() == 0 })
+		}
+	}
+	if drop {
+		rss.RemoveIf(func(rs ptrace.ResourceSpans) bool { return rs.ScopeSpans().Len() == 0 })
+	}
+	if txns > 0 {
+		p.tel.transactions.Add(ctx, txns)
+	}
+	if bad > 0 {
+		p.tel.decodeErrors.Add(ctx, bad)
 	}
 	if len(all) > 0 {
 		p.appendAnomalies(td, all)
 	}
+	if td.ResourceSpans().Len() == 0 {
+		return nil // only isowatch.txn spans, all dropped
+	}
 	return p.next.ConsumeTraces(ctx, td)
+}
+
+// observe handles one anomaly: it updates its issue and the metrics, and
+// queues the webhook and protection work. It reports whether the anomaly
+// gets a span.
+func (p *isowatch) observe(ctx context.Context, a checker.Anomaly) seen {
+	g := signature(a)
+	s := p.issues.observe(g, p.now())
+	p.tel.anomaly(ctx, g)
+	p.lostDirty.Store(true)
+	if p.prot != nil {
+		p.prot.protect(ctx, a, g.id)
+	}
+	if p.hook != nil && s.notify {
+		p.hook.notify(ctx, s, a)
+	}
+	return s
 }
 
 // decode turns an isowatch.txn span back into a transaction.
@@ -184,7 +333,9 @@ func (p *isowatch) appendAnomalies(td ptrace.Traces, all []found) {
 		span := ss.Spans().AppendEmpty()
 		span.SetName(history.AnomalySpan)
 		span.SetTraceID(f.trace)
-		span.SetParentSpanID(f.parent)
+		if !f.parent.IsEmpty() {
+			span.SetParentSpanID(f.parent)
+		}
 		span.SetSpanID(newSpanID())
 		span.SetStartTimestamp(now)
 		span.SetEndTimestamp(now)
@@ -193,6 +344,17 @@ func (p *isowatch) appendAnomalies(td ptrace.Traces, all []found) {
 		span.Status().SetMessage(a.Summary)
 
 		attrs := span.Attributes()
+		is := f.issue.issue
+		attrs.PutStr("isowatch.issue.id", is.ID)
+		attrs.PutInt("isowatch.issue.count", is.Count)
+		attrs.PutStr("isowatch.issue.first_seen", is.FirstSeen.UTC().Format(time.RFC3339Nano))
+		attrs.PutBool("isowatch.issue.new", f.issue.isNew)
+		if is.Unreported > 0 {
+			attrs.PutInt("isowatch.issue.unreported", is.Unreported)
+		}
+		if is.LostWrites > 0 {
+			attrs.PutInt("isowatch.issue.lost_writes", is.LostWrites)
+		}
 		attrs.PutStr("isowatch.anomaly.kind", string(a.Kind))
 		attrs.PutBool("isowatch.anomaly.unexpected", a.Unexpected)
 		attrs.PutStr("isowatch.anomaly.summary", a.Summary)
@@ -239,6 +401,8 @@ func (p *isowatch) appendAnomalies(td ptrace.Traces, all []found) {
 		}
 
 		p.logger.Warn("isolation anomaly",
+			zap.String("issue", is.ID),
+			zap.Int64("count", is.Count),
 			zap.String("kind", string(a.Kind)),
 			zap.Bool("unexpected", a.Unexpected),
 			zap.Strings("traces", a.TraceIDs()),

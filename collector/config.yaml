@@ -1,6 +1,8 @@
 # Example collector config. Apps send OTLP to port 4318 (HTTP) or 4317
 # (gRPC). Anomalies are printed by the debug exporter and can also be sent
 # on to any OTLP backend (Jaeger, SigNoz, Grafana Tempo, ...).
+# See docs/collector.md for running one central checker next to the
+# collectors you already have.
 receivers:
   otlp:
     protocols:
@@ -10,10 +12,38 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
-  # IsoWatch must see transactions before batching or sampling drops any.
+  # IsoWatch must see every isowatch.txn span, so it goes before batching,
+  # filtering and any sampling.
   isowatch:
-    window: 2m
-    group_by: transaction
+    window: 2m              # keep transactions this long (longer than your longest transaction)
+    group_by: transaction   # or "trace" to also find anomalies across one whole request
+    # max_depth: 16         # longest cycle to look for
+    # evict_interval: 5s    # how often to forget old transactions and count lost writes
+    # drop_txn_spans: true  # remove the isowatch.txn spans after checking (default true);
+    #                       # set false to keep them in your backend for debugging
+    # ignore_tables: []     # anomalies only on these tables are acceptable
+    # ignore_names: []      # transactions with these names may race
+
+    # One bug can happen thousands of times. "per_issue" (the default) adds
+    # an anomaly span for the first occurrence of each issue, then at most
+    # one more per issue_interval with the running count. "every" adds one
+    # per occurrence. Metrics count every occurrence in both modes.
+    # report: per_issue
+    # issue_interval: 1m
+    # max_issues: 1000      # issues kept in memory; the least recently seen is forgotten
+
+    # Post a JSON message once per new issue. It has a "text" field, so a
+    # Slack incoming webhook works as is. Off when url is empty.
+    # webhook:
+    #   url: ${env:ISOWATCH_WEBHOOK_URL}
+    #   timeout: 5s
+    #   repeat: false       # true also posts the count, at most once per issue_interval
+
+    # Write the names of the transactions in each anomaly to a table that the
+    # apps read, so they run them at SERIALIZABLE. Off when dsn is empty.
+    # protection:
+    #   dsn: ${env:ISOWATCH_PROTECTION_DSN}
+    #   table: isowatch_protected
   batch: {}
 
 exporters:
@@ -28,10 +58,13 @@ service:
   telemetry:
     logs:
       # The collector normally logs only the first 10 identical messages per
-      # second. Turn that off so every anomaly is printed. (The anomaly spans
-      # themselves are never sampled.)
+      # second. Turn that off so every reported anomaly is printed. (The
+      # anomaly spans themselves are never sampled.)
       sampling:
         enabled: false
+    # The isowatch_* metrics (anomalies, lost writes, transactions, ...) are
+    # on the collector's own Prometheus endpoint, http://localhost:8888/metrics
+    # by default. See docs/alerts.md.
   pipelines:
     traces:
       receivers: [otlp]

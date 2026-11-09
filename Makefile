@@ -3,9 +3,10 @@
 REPO_DIR := $(abspath .)
 PG_PORT ?= 55432
 TEST_DSN ?= postgres://postgres:postgres@localhost:$(PG_PORT)/postgres
+PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
 BUILDER ?= $(shell go env GOPATH)/bin/builder
 
-.PHONY: help test test-db db db-stop collector clean demo-up demo-load demo-down
+.PHONY: help test test-db test-alerts db db-stop collector clean demo-up demo-load demo-down
 
 help: ## Show this help
 	@grep -E "^[a-z-]+:.*##" $(MAKEFILE_LIST) | sed "s/:.*##/:/"
@@ -22,8 +23,12 @@ db-stop: ## Stop and remove the test database
 
 test-db: ## All tests, including real PostgreSQL ones (run "make db" first)
 	ISOWATCH_TEST_DSN=$(TEST_DSN) go test -race -count=1 ./...
-	cd processor/isowatchprocessor && go test -race ./...
+	cd processor/isowatchprocessor && ISOWATCH_TEST_DSN=$(TEST_DSN) go test -race -count=1 ./...
 	cd examples/bank && ISOWATCH_TEST_DSN=$(TEST_DSN) go test -race -count=1 ./...
+
+test-alerts: ## Check and unit-test the Prometheus alert rules (needs Docker)
+	docker run --rm -v $(CURDIR)/collector:/w -w /w --entrypoint promtool $(PROMETHEUS_IMAGE) check rules alerts.yaml
+	docker run --rm -v $(CURDIR)/collector:/w -w /w --entrypoint promtool $(PROMETHEUS_IMAGE) test rules alerts_test.yaml
 
 collector: ## Build the collector with the IsoWatch processor into collector/build
 	@test -x $(BUILDER) || go install go.opentelemetry.io/collector/cmd/builder@v0.162.0

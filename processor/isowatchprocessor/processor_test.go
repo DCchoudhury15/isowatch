@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -71,7 +72,9 @@ func anomalySpans(sink *consumertest.TracesSink) []ptrace.Span {
 }
 
 func TestLostUpdateBecomesAnomalySpan(t *testing.T) {
-	p, sink := newTestProcessor(t, createDefaultConfig())
+	cfg := createDefaultConfig()
+	cfg.DropTxnSpans = false // this test checks that the txn spans pass through
+	p, sink := newTestProcessor(t, cfg)
 	ctx := context.Background()
 
 	// Same history PostgreSQL produced: both read xmin 760, T1 wrote 761,
@@ -123,6 +126,9 @@ func TestLostUpdateBecomesAnomalySpan(t *testing.T) {
 	if steps, ok := a.Attributes().Get("isowatch.anomaly.steps"); !ok || !strings.Contains(steps.Str(), "SELECT balance") {
 		t.Fatal("steps should carry the SQL")
 	}
+	if id, ok := a.Attributes().Get("isowatch.issue.id"); !ok || len(id.Str()) != 16 {
+		t.Fatal("every anomaly span needs an isowatch.issue.id")
+	}
 	tr, _ := a.Attributes().Get("isowatch.anomaly.traces")
 	if tr.Slice().Len() != 2 {
 		t.Fatalf("want 2 traces listed, got %d", tr.Slice().Len())
@@ -150,7 +156,9 @@ func TestDropTxnSpans(t *testing.T) {
 }
 
 func TestBadSpanIsSkipped(t *testing.T) {
-	p, sink := newTestProcessor(t, createDefaultConfig())
+	cfg := createDefaultConfig()
+	cfg.DropTxnSpans = false // with dropping on, the bad span would be removed too
+	p, sink := newTestProcessor(t, cfg)
 	td := ptrace.NewTraces()
 	span := td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span.SetName(history.SpanName)
@@ -179,6 +187,61 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+func TestNewOptionsAreChecked(t *testing.T) {
+	bad := map[string]func(c *Config){
+		"report":           func(c *Config) { c.Report = "sometimes" },
+		"issue_interval":   func(c *Config) { c.IssueInterval = 0 },
+		"max_issues":       func(c *Config) { c.MaxIssues = 0 },
+		"webhook.url":      func(c *Config) { c.Webhook.URL = "hooks.example.com/x" },
+		"webhook.timeout":  func(c *Config) { c.Webhook.URL = "https://example.com/hook"; c.Webhook.Timeout = 0 },
+		"protection.dsn":   func(c *Config) { c.Protection.DSN = "postgres://host:notaport/db" },
+		"protection.table": func(c *Config) { c.Protection.DSN = "postgres://localhost/db"; c.Protection.Table = "" },
+	}
+	for name, mutate := range bad {
+		c := createDefaultConfig()
+		mutate(c)
+		if c.Validate() == nil {
+			t.Errorf("%s must be checked", name)
+		}
+	}
+}
+
+// The options load from collector YAML under the documented names.
+func TestConfigFromYAML(t *testing.T) {
+	if err := componenttest.CheckConfigStruct(createDefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	conf := confmap.NewFromStringMap(map[string]any{
+		"report":         "every",
+		"issue_interval": "30s",
+		"max_issues":     50,
+		"drop_txn_spans": false,
+		"webhook":        map[string]any{"url": "https://hooks.example.com/abc", "timeout": "2s", "repeat": true},
+		"protection":     map[string]any{"dsn": "postgres://isowatch@db:5432/app", "table": "app.protected"},
+	})
+	cfg := createDefaultConfig()
+	if err := conf.Unmarshal(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Report != "every" || cfg.IssueInterval != 30*time.Second || cfg.MaxIssues != 50 || cfg.DropTxnSpans ||
+		cfg.Webhook.URL != "https://hooks.example.com/abc" || cfg.Webhook.Timeout != 2*time.Second || !cfg.Webhook.Repeat ||
+		cfg.Protection.DSN != "postgres://isowatch@db:5432/app" || cfg.Protection.Table != "app.protected" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	// Defaults for what is not set.
+	def := createDefaultConfig()
+	if err := confmap.NewFromStringMap(map[string]any{"webhook": map[string]any{"url": "https://x.example/h"}}).Unmarshal(def); err != nil {
+		t.Fatal(err)
+	}
+	if def.Report != "per_issue" || def.IssueInterval != time.Minute || !def.DropTxnSpans ||
+		def.Webhook.Timeout != 5*time.Second || def.Protection.Table != "isowatch_protected" {
+		t.Fatalf("defaults = %+v", def)
+	}
+}
+
 func TestIgnoreNamesFromConfig(t *testing.T) {
 	cfg := createDefaultConfig()
 	cfg.IgnoreNames = []string{"deposit"}
@@ -198,5 +261,65 @@ func TestIgnoreNamesFromConfig(t *testing.T) {
 	}
 	if p.checker.Stats().Suppressed != 1 {
 		t.Fatal("should count one suppressed anomaly")
+	}
+}
+
+// By default the isowatch.txn spans are removed after checking. The
+// anomaly span then hangs from the request span that ran the transaction,
+// and its links point at the request spans, so nothing points at a span the
+// backend never receives.
+func TestDropTxnSpansIsTheDefault(t *testing.T) {
+	p, sink, _ := startProcessor(t, nopSettings(), createDefaultConfig())
+	sendRace(t, p, 0, depositRace)
+
+	if n := len(spansNamed(sink, history.SpanName)); n != 0 {
+		t.Fatalf("isowatch.txn spans should be dropped by default, %d left", n)
+	}
+	if n := len(spansNamed(sink, "POST /deposit")); n != 2 {
+		t.Fatalf("app spans must stay, got %d", n)
+	}
+	got := spansNamed(sink, history.AnomalySpan)
+	if len(got) != 1 {
+		t.Fatalf("want 1 anomaly span, got %d", len(got))
+	}
+	a := got[0]
+	if a.TraceID() != traceID(0, 2) || a.ParentSpanID() != requestSpanID(0, 2) {
+		t.Fatalf("anomaly parent = %s, want the request span %s", a.ParentSpanID(), requestSpanID(0, 2))
+	}
+	links := map[string]bool{}
+	for i := 0; i < a.Links().Len(); i++ {
+		links[a.Links().At(i).SpanID().String()] = true
+	}
+	if len(links) != 2 || !links[requestSpanID(0, 1).String()] || !links[requestSpanID(0, 2).String()] {
+		t.Fatalf("links = %v, want both request spans", links)
+	}
+	// No empty resources or scopes are sent on.
+	for _, td := range sink.AllTraces() {
+		rss := td.ResourceSpans()
+		for i := 0; i < rss.Len(); i++ {
+			sss := rss.At(i).ScopeSpans()
+			if sss.Len() == 0 {
+				t.Fatal("empty resource sent on")
+			}
+			for j := 0; j < sss.Len(); j++ {
+				if sss.At(j).Spans().Len() == 0 {
+					t.Fatal("empty scope sent on")
+				}
+			}
+		}
+	}
+}
+
+// A collector that only checks (the central checker) sends nothing on for
+// batches that held only isowatch.txn spans and no anomaly.
+func TestNothingSentWhenOnlyTxnSpansArrive(t *testing.T) {
+	p, sink, _ := startProcessor(t, nopSettings(), createDefaultConfig())
+	td := ptrace.NewTraces()
+	addTxnSpan(td, 0xA, 0x1, &history.Txn{ID: "T1", Reads: []history.Read{{Table: "t", Key: "1", Xmin: 5}}})
+	if err := p.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(sink.AllTraces()); n != 0 {
+		t.Fatalf("want nothing sent on, got %d batches", n)
 	}
 }

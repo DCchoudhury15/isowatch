@@ -24,5 +24,5 @@ func NewFactory() processor.Factory {
 }
 
 func createTraces(_ context.Context, set processor.Settings, cfg component.Config, next consumer.Traces) (processor.Traces, error) {
-	return newProcessor(set.Logger, cfg.(*Config), next), nil
+	return newProcessor(set, cfg.(*Config), next)
 }

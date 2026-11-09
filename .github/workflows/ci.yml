@@ -36,7 +36,9 @@ jobs:
         env:
           ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
         run: go test -race -count=1 ./...
-      - name: Processor tests
+      - name: Processor tests (including real PostgreSQL 18)
+        env:
+          ISOWATCH_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres
         run: cd processor/isowatchprocessor && go test -race -count=1 ./...
       - name: Demo builds and its isowatchtest tests pass
         env:
@@ -56,3 +58,5 @@ jobs:
         run: |
           ./collector/build/isowatch-collector validate --config collector/config.yaml
           ./collector/build/isowatch-collector validate --config collector/config.docker.yaml
+      - name: Alert rules
+        run: make test-alerts

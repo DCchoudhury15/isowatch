@@ -1,0 +1,61 @@
+# Prometheus alert rules for IsoWatch. See docs/alerts.md.
+# Load them with rule_files: [alerts.yaml] in your prometheus.yml.
+groups:
+  - name: isowatch
+    rules:
+      # A race really happened in production.
+      - alert: IsoWatchAnomaly
+        expr: sum by (kind, table, txn_name) (increase(isowatch_anomalies[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.kind }} on {{ $labels.table }} ({{ $labels.txn_name }})"
+          description: >-
+            IsoWatch saw this anomaly about {{ $value | humanize }} times in 10 minutes.
+            Search your tracing backend for isowatch.anomaly spans: they show the SQL,
+            the requests involved and how to fix it.
+
+      # Data was lost: a write overwrote changes it never saw.
+      - alert: IsoWatchLostWrites
+        expr: sum(increase(isowatch_lost_writes[15m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "IsoWatch counted lost writes"
+          description: >-
+            About {{ $value | humanize }} writes were overwritten in 15 minutes by
+            transactions that never saw them. See the IsoWatchAnomaly alerts for where.
+
+      # IsoWatch is blind: no transaction reached the checker.
+      - alert: IsoWatchSeesNoTransactions
+        expr: sum(rate(isowatch_transactions[15m])) == 0 or absent(isowatch_transactions)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "IsoWatch received no transactions for 15 minutes"
+          description: >-
+            Check that the apps still send isowatch.txn spans to this collector
+            (capture.NewOTLPSink) and that nothing before the isowatch processor drops them.
+
+      # Spans arrive but cannot be read, for example a version mismatch.
+      - alert: IsoWatchDecodeErrors
+        expr: sum(increase(isowatch_decode_errors[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "IsoWatch could not read some isowatch.txn spans"
+          description: >-
+            Something cut or changed the spans on the way, or the apps use a newer
+            IsoWatch than the collector.
+
+      # The webhook or the protection database is down or too slow.
+      - alert: IsoWatchNotificationsDropped
+        expr: sum by (target) (increase(isowatch_notifications_dropped[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "IsoWatch dropped {{ $labels.target }} messages"
+          description: >-
+            The {{ $labels.target }} queue was full. Check that the webhook URL or the
+            protection database can be reached from the collector.

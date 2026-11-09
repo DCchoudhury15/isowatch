@@ -1,0 +1,87 @@
+# promtool unit tests for alerts.yaml. Run: make test-alerts
+rule_files: [alerts.yaml]
+evaluation_interval: 1m
+tests:
+  # A burst of lost updates fires IsoWatchAnomaly and IsoWatchLostWrites.
+  - interval: 1m
+    input_series:
+      - series: 'isowatch_anomalies{kind="lost-update",table="public.accounts",txn_name="deposit",otel_scope_name="x"}'
+        values: '0 0 50 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199 199'
+      - series: 'isowatch_lost_writes{table="public.accounts"}'
+        values: '0 0 40 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183 183'
+      - series: 'isowatch_transactions'
+        values: '0+10x24'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: IsoWatchAnomaly
+        exp_alerts:
+          - exp_labels: {severity: warning, kind: lost-update, table: public.accounts, txn_name: deposit}
+            exp_annotations:
+              summary: "lost-update on public.accounts (deposit)"
+              description: "IsoWatch saw this anomaly about 199 times in 10 minutes. Search your tracing backend for isowatch.anomaly spans: they show the SQL, the requests involved and how to fix it."
+      - eval_time: 5m
+        alertname: IsoWatchLostWrites
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "IsoWatch counted lost writes"
+              description: "About 183 writes were overwritten in 15 minutes by transactions that never saw them. See the IsoWatchAnomaly alerts for where."
+      # Quiet again once the counter stops growing for longer than the window.
+      - eval_time: 20m
+        alertname: IsoWatchAnomaly
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: IsoWatchSeesNoTransactions
+        exp_alerts: []
+
+  # No transactions at all fires IsoWatchSeesNoTransactions after 15 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'isowatch_transactions'
+        values: '5x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IsoWatchSeesNoTransactions
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: IsoWatchSeesNoTransactions
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "IsoWatch received no transactions for 15 minutes"
+              description: "Check that the apps still send isowatch.txn spans to this collector (capture.NewOTLPSink) and that nothing before the isowatch processor drops them."
+
+  # Dropped webhook messages fire per target.
+  - interval: 1m
+    input_series:
+      - series: 'isowatch_notifications_dropped{target="webhook"}'
+        values: '0 0 3 3 3'
+      - series: 'isowatch_decode_errors'
+        values: '0 0 0 0 0'
+      - series: 'isowatch_transactions'
+        values: '0+10x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: IsoWatchNotificationsDropped
+        exp_alerts:
+          - exp_labels: {severity: warning, target: webhook}
+            exp_annotations:
+              summary: "IsoWatch dropped webhook messages"
+              description: "The webhook queue was full. Check that the webhook URL or the protection database can be reached from the collector."
+      - eval_time: 3m
+        alertname: IsoWatchDecodeErrors
+        exp_alerts: []
+
+  # The metric does not exist at all (no transaction ever arrived).
+  - interval: 1m
+    input_series:
+      - series: 'isowatch_issues'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IsoWatchSeesNoTransactions
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "IsoWatch received no transactions for 15 minutes"
+              description: "Check that the apps still send isowatch.txn spans to this collector (capture.NewOTLPSink) and that nothing before the isowatch processor drops them."

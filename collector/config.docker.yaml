@@ -11,6 +11,11 @@ processors:
   isowatch:
     window: 2m
     group_by: transaction
+    # The demo shows everything: one anomaly span per occurrence, and the
+    # isowatch.txn spans in Jaeger. In production the defaults
+    # (report: per_issue, drop_txn_spans: true) cost far fewer spans.
+    report: every
+    drop_txn_spans: false
   batch: {}
 
 exporters:
