@@ -229,11 +229,9 @@ func (m *Monitor) startProtection(ctx context.Context) error {
 	return nil
 }
 
-// Close stops following the protection store. Names protected or
-// unprotected just before Close are written to the store first (waiting at
-// most a few seconds). The Monitor keeps working after Close, with the
-// names it last knew. Without a ProtectionStore, Close does nothing.
-func (m *Monitor) Close() {
+// stopProtection stops following the protection store, after writing the
+// names that are still pending (waiting at most storeTimeout).
+func (m *Monitor) stopProtection() {
 	p := m.prot
 	if p == nil {
 		return

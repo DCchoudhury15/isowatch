@@ -65,9 +65,23 @@ type Config struct {
 	ProtectionStore protection.Store
 	// ProtectionPoll is how often the store is read. Default: 5s.
 	ProtectionPoll time.Duration
+	// WatchAll also watches every plain table with a primary key outside
+	// pg_catalog and information_schema, as it exists when New runs. Tables
+	// without a primary key and partitioned tables are skipped, not an
+	// error: see Monitor.SkippedTables. Tables may then be empty. The
+	// ProtectionStore's own table is never watched.
+	WatchAll bool
+	// ExcludeTables are never watched. Each entry is "schema.table",
+	// "table" (in any schema) or "schema.*" (a whole schema).
+	ExcludeTables []string
 	// Logger receives problems IsoWatch works around without failing your
-	// app, such as a protection store it cannot reach. Default: none.
+	// app (such as a protection store it cannot reach), a note about tables
+	// WatchAll skipped, and the coverage report every ReportEvery.
+	// Default: none.
 	Logger *slog.Logger
+	// ReportEvery is how often the coverage report is logged to Logger.
+	// 0 turns it off. Call Monitor.Close to stop it.
+	ReportEvery time.Duration
 }
 
 // Querier is the small part of pgx (Conn or Pool) that New needs.
@@ -104,6 +118,20 @@ type Monitor struct {
 	protected                              sync.Map // name -> struct{}
 	reasons                                map[string]int64
 	prot                                   *protector // set when Config.ProtectionStore is used
+
+	cov     coverage       // see coverage.go
+	skipped []SkippedTable // tables WatchAll found but could not watch
+}
+
+// Close stops the Monitor's background work: following the protection
+// store (names protected or unprotected just before Close are written to
+// the store first, waiting at most a few seconds) and the periodic coverage
+// report. It does not close any pool. The Monitor keeps working after
+// Close, with the protected names it last knew. It is safe to call more
+// than once.
+func (m *Monitor) Close() {
+	m.stopProtection()
+	m.stopReports()
 }
 
 // ErrUnsupportedServer is returned when PostgreSQL is older than 18.
@@ -126,7 +154,7 @@ func New(ctx context.Context, db Querier, cfg Config) (*Monitor, error) {
 	if cfg.Sink == nil {
 		return nil, errors.New("isowatch: Config.Sink is required")
 	}
-	if len(cfg.Tables) == 0 {
+	if len(cfg.Tables) == 0 && !cfg.WatchAll {
 		return nil, errors.New("isowatch: Config.Tables is empty")
 	}
 	var version int
@@ -165,9 +193,15 @@ func New(ctx context.Context, db Querier, cfg Config) (*Monitor, error) {
 		t := &rewrite.Table{Schema: schema, Name: rel, PK: pk, Unqualified: unqualified}
 		m.tables[t.QualifiedName()] = t
 	}
+	// Tables first: startProtection checks that the protection table is
+	// not watched.
+	if err := m.loadTables(ctx, db); err != nil {
+		return nil, err
+	}
 	if err := m.startProtection(ctx); err != nil {
 		return nil, err
 	}
+	m.startReports()
 	return m, nil
 }
 
@@ -204,11 +238,12 @@ func (m *Monitor) plan(sql string) *rewrite.Plan {
 	return p
 }
 
-func (m *Monitor) countUntracked(reason string) {
+func (m *Monitor) countUntracked(p *rewrite.Plan) {
 	m.untracked.Add(1)
 	m.reasonMu.Lock()
-	m.reasons[reason]++
+	m.reasons[p.Reason]++
 	m.reasonMu.Unlock()
+	m.cov.add(p)
 }
 
 // Stats returns a snapshot of the counters.

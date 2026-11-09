@@ -40,15 +40,20 @@ func (r *rows) FieldDescriptions() []pgconn.FieldDescription {
 
 // Next moves to the next row and records its hidden columns.
 func (r *rows) Next() bool {
-	if !r.inner.Next() {
-		return false
+	for r.inner.Next() {
+		raw := r.inner.RawValues()
+		if len(raw) >= r.plan.Hidden {
+			// record copies what it needs; raw is only valid until the next call.
+			r.t.record(r.plan, r.stmt, r.q, raw[len(raw)-r.plan.Hidden:])
+		}
+		if r.plan.Kind == rewrite.Write && len(raw) == r.plan.Hidden {
+			// A write without its own RETURNING returns no rows. The rows
+			// here exist only because of our hidden RETURNING columns.
+			continue
+		}
+		return true
 	}
-	raw := r.inner.RawValues()
-	if len(raw) >= r.plan.Hidden {
-		// record copies what it needs; raw is only valid until the next call.
-		r.t.record(r.plan, r.stmt, r.q, raw[len(raw)-r.plan.Hidden:])
-	}
-	return true
+	return false
 }
 
 // Scan fills dest with the visible columns. nil destinations make pgx skip

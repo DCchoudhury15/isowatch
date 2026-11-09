@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -54,10 +53,15 @@ func WithName(name string) Option {
 	return func(o *options) { o.name = name }
 }
 
-func buildOptions(o []Option) options {
+// buildOptions applies o. Without WithName, the name comes from ctx (see
+// WithNameContext), so an explicit WithName always wins.
+func buildOptions(ctx context.Context, o []Option) options {
 	var out options
 	for _, f := range o {
 		f(&out)
+	}
+	if out.name == "" {
+		out.name = NameFromContext(ctx)
 	}
 	return out
 }
@@ -68,7 +72,7 @@ func buildOptions(o []Option) options {
 // If the transaction's name is protected (see Protect), it runs at
 // SERIALIZABLE. Begin does not retry; use Do for automatic retries.
 func (m *Monitor) Begin(ctx context.Context, db TxStarter, opts pgx.TxOptions, o ...Option) (*Tx, error) {
-	bo := buildOptions(o)
+	bo := buildOptions(ctx, o)
 	if bo.name != "" && m.IsProtected(bo.name) {
 		opts.IsoLevel = pgx.Serializable
 	}
@@ -107,7 +111,7 @@ func (m *Monitor) Begin(ctx context.Context, db TxStarter, opts pgx.TxOptions, o
 // not do things outside the database that cannot be repeated (like sending
 // an email) before the transaction commits.
 func (m *Monitor) Do(ctx context.Context, db TxStarter, opts pgx.TxOptions, fn func(*Tx) error, o ...Option) error {
-	bo := buildOptions(o)
+	bo := buildOptions(ctx, o)
 	retries := 0
 	if bo.name != "" && m.IsProtected(bo.name) {
 		retries = m.maxRetries()
@@ -151,33 +155,7 @@ func (t *Tx) Conn() *pgx.Conn { return t.tx.Conn() }
 
 // prepare expands pgx query options and decides how to run a statement.
 func (t *Tx) prepare(ctx context.Context, sql string, args []any) (string, []any, *rewrite.Plan, error) {
-	var lead []any
-	var rewriter pgx.QueryRewriter
-	for len(args) > 0 {
-		switch a := args[0].(type) {
-		case pgx.QueryExecMode:
-			lead = append(lead, a)
-		case pgx.QueryRewriter:
-			rewriter = a
-		case pgx.QueryResultFormats, pgx.QueryResultFormatsByOID:
-			// Custom result formats would not cover our hidden columns, so
-			// run this statement as is.
-			return sql, append(append(lead, a), args[1:]...), &rewrite.Plan{Kind: rewrite.Untracked, SQL: sql, Reason: "custom result formats"}, nil
-		default:
-			goto done
-		}
-		args = args[1:]
-	}
-done:
-	if rewriter != nil {
-		var err error
-		sql, args, err = rewriter.RewriteQuery(ctx, t.tx.Conn(), sql, args)
-		if err != nil {
-			return "", nil, nil, fmt.Errorf("rewrite query failed: %w", err)
-		}
-	}
-	p := t.m.plan(sql)
-	return p.SQL, append(lead, args...), p, nil
+	return t.m.prepare(ctx, t.tx.Conn(), sql, args)
 }
 
 // after updates savepoint and isolation bookkeeping once a statement that
@@ -209,13 +187,17 @@ func (t *Tx) after(p *rewrite.Plan) {
 	}
 }
 
-// queryIndex stores normalized SQL once per transaction.
-func (t *Tx) queryIndex(original string) int {
+// queryIndex stores normalized SQL once per transaction. normalized is the
+// plan's copy of it, if it has one.
+func (t *Tx) queryIndex(original, normalized string) int {
 	if q, ok := t.queries[original]; ok {
 		return q
 	}
 	q := len(t.txn.Statements)
-	t.txn.Statements = append(t.txn.Statements, rewrite.Normalize(original))
+	if normalized == "" {
+		normalized = rewrite.Normalize(original)
+	}
+	t.txn.Statements = append(t.txn.Statements, normalized)
 	t.queries[original] = q
 	return q
 }
@@ -240,7 +222,7 @@ func (t *Tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandT
 		return rows.CommandTag(), rows.Err()
 	}
 	if p.Kind == rewrite.Untracked {
-		t.m.countUntracked(p.Reason)
+		t.m.countUntracked(p)
 	}
 	tag, err := t.tx.Exec(ctx, run, runArgs...)
 	if err == nil {
@@ -262,7 +244,7 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 		return t.query(ctx, sql, run, runArgs, p)
 	}
 	if p.Kind == rewrite.Untracked {
-		t.m.countUntracked(p.Reason)
+		t.m.countUntracked(p)
 	}
 	rows, err := t.tx.Query(ctx, run, runArgs...)
 	if err != nil {
@@ -288,7 +270,7 @@ func (t *Tx) query(ctx context.Context, original, run string, args []any, p *rew
 		return nil, err
 	}
 	t.m.tracked.Add(1)
-	r := &rows{inner: inner, t: t, plan: p, stmt: t.stmt, q: t.queryIndex(original)}
+	r := &rows{inner: inner, t: t, plan: p, stmt: t.stmt, q: t.queryIndex(original, p.Normalized)}
 	t.stmt++
 	return r, nil
 }
