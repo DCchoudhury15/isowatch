@@ -83,6 +83,22 @@ collector image are released together with the same version. See
 - Prometheus alert rules in `collector/alerts.yaml`, with tests
   (`make test-alerts`).
 
+#### Proxy (`cmd/isowatch-proxy`)
+
+- A PostgreSQL wire protocol proxy, so apps in any language can use IsoWatch
+  by changing only their connection string. It follows the simple and the
+  extended protocol (prepared statements, portals, row limits, binary
+  results, pipelining), transactions with and without `BEGIN`, savepoints,
+  isolation levels and `search_path`, and passes authentication and cancel
+  requests through. Replies reach the app byte for byte as PostgreSQL sent
+  them. sqlcommenter comments (`traceparent`, `route`, `controller`,
+  `action`, `isowatch_name`) link transactions to traces and name them.
+  Anomalies go to its log, or every transaction to the collector
+  (`-sink otlp`). `/stats` and `/coverage` show what it saw.
+- `capture.Recorder` (with `Monitor.Plan` and `Monitor.CountUntracked`)
+  records transactions for programs that run the SQL themselves, like the
+  proxy.
+
 #### Running it
 
 - The collector image `ghcr.io/dcchoudhury15/isowatch-collector` for
@@ -94,7 +110,7 @@ collector image are released together with the same version. See
   fixed versions of both, a load generator, and `go test` examples.
 - Docker Compose demo with PostgreSQL 18, Jaeger and the collector.
 - CI with real PostgreSQL 18 tests, and a release workflow.
-- Docs: [installing](docs/install.md), [adding IsoWatch to an existing app](docs/adopting.md),
+- Docs: [installing](docs/install.md), [the proxy](docs/proxy.md), [adding IsoWatch to an existing app](docs/adopting.md),
   [testing](docs/testing.md), [production](docs/production.md),
   [the collector](docs/collector.md), [metrics and alerts](docs/alerts.md).
 

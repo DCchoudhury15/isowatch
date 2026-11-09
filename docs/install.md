@@ -100,6 +100,14 @@ cd "isowatch-collector_${v}_linux_amd64"
 
 The archive has the binary, the license and the commented example config. The binaries are not signed for macOS. If you download one with a browser, macOS may block it. `xattr -d com.apple.quarantine isowatch-collector` allows it to run. Files downloaded with `curl` are not blocked.
 
+## The proxy, for apps in any language
+
+```bash
+go install github.com/DCchoudhury15/isowatch/cmd/isowatch-proxy@latest
+```
+
+It needs cgo and a C compiler to build, like the library. See [The IsoWatch proxy](proxy.md) for how to run it.
+
 ## Adding the processor to your own collector
 
 If you already build a collector with the [OpenTelemetry Collector Builder](https://opentelemetry.io/docs/collector/custom-collector/) (ocb), add the processor to your builder config:

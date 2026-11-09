@@ -185,6 +185,18 @@ isowatchtest.Concurrently(t, 20, func(i int) error {
 
 Only the test database needs PostgreSQL 18. Read more: [Testing with IsoWatch](docs/testing.md)
 
+## Any language: the proxy
+
+Apps in Ruby, Python, Java, Node or anything else that talks to PostgreSQL can use the IsoWatch proxy instead of the Go library. Start it in front of your database and change only the connection string:
+
+```bash
+make proxy
+./build/isowatch-proxy -upstream db:5432 -dsn 'postgres://isowatch@db:5432/app' -tables accounts,orders
+# then connect your app to proxy-host:6432 instead of db:5432
+```
+
+It rewrites statements on watched tables like the library does, removes the extra columns before your app sees the results, and logs each anomaly (or sends the transactions to the collector). sqlcommenter comments in your SQL (`traceparent`, `route`, `controller`, `action`) link the anomalies to your traces and name the transactions. Read more: [The IsoWatch proxy](docs/proxy.md)
+
 ## From finding to fixing: protection
 
 PostgreSQL's SERIALIZABLE level prevents all of these anomalies, but it costs retries, so most apps do not use it everywhere. IsoWatch can apply it **only where it has seen a problem**:
@@ -265,6 +277,7 @@ Checking for isolation anomalies is a well studied research area. IsoWatch does 
 | `capture/rewrite/` | Adds the hidden version columns to SQL |
 | `protection/` | The list of protected names, shared by every replica through PostgreSQL |
 | `isowatchtest/` | Fail `go test` when a race really happens |
+| `proxy/`, `cmd/isowatch-proxy/` | The PostgreSQL proxy for apps in any language |
 | `processor/isowatchprocessor/` | The OpenTelemetry Collector processor |
 | `collector/` | Config to build and run the collector |
 | `examples/bank/` | The demo service and load generator |

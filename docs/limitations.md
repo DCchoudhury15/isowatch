@@ -9,9 +9,9 @@ Because of that rule, everything below can make IsoWatch **miss** an anomaly. No
 ## Requirements
 
 * **PostgreSQL 18 or newer.** IsoWatch needs `RETURNING old.xmin`, which arrived in PostgreSQL 18. `capture.New` returns an error on older servers.
-* **Go with pgx v5.** Other drivers are not supported yet.
+* **Go with pgx v5, or any language through the [proxy](proxy.md).** Other Go drivers (database/sql) are not supported by the library yet.
 * **Watched tables must be plain tables with a primary key.** Views and partitioned tables are refused at startup. With `WatchAll` they are skipped instead, and listed in `mon.SkippedTables()`.
-* **SQL must go through IsoWatch:** `mon.Wrap(pool)`, `mon.Do` or `mon.Begin`. Statements sent on the plain pool are not seen, and not counted in the coverage report.
+* **SQL must go through IsoWatch:** `mon.Wrap(pool)`, `mon.Do` or `mon.Begin`, or the proxy. Statements sent on the plain pool, or straight to the database, are not seen, and not counted in the coverage report.
 
 ## Statements that are run unchanged (not tracked)
 
@@ -23,7 +23,7 @@ Because of that rule, everything below can make IsoWatch **miss** an anomaly. No
 | Watched tables inside subqueries, or behind a join that has its own alias | Only tables directly in `FROM` (including plain joins) are tracked |
 | `MERGE` | Not supported yet |
 | Rows read by `INSERT ... SELECT` or by `UPDATE ... FROM` | The write is tracked, the extra read is not |
-| Several statements in one string, `SendBatch`, `CopyFrom` | Not supported yet. Through `mon.Wrap`, batches and `CopyFrom` are counted as untracked, so the coverage report shows them |
+| Several statements in one string, `SendBatch`, `CopyFrom` | Not supported yet. Through `mon.Wrap`, batches and `CopyFrom` are counted as untracked, so the coverage report shows them. The proxy does track pipelined statements sent one by one (the extended protocol), but not several statements in one string |
 | Statements sent through `tx.Raw()` | By design |
 | A table alias named `old` or `new` on a write | It would clash with `RETURNING old.x` |
 | Queries that use custom result formats (`pgx.QueryResultFormats`) | The formats would not cover the hidden columns |
