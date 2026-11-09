@@ -1,6 +1,18 @@
 # Metrics and alerts
 
-The IsoWatch processor adds `isowatch_*` metrics to the collector's own metrics endpoint. By default that is `http://localhost:8888/metrics`. You set the address under `service.telemetry.metrics` in the collector config.
+The IsoWatch processor adds `isowatch_*` metrics to the collector's own metrics endpoint. By default that is `http://localhost:8888/metrics`. The collector image serves it on all addresses instead, so Prometheus can reach it from outside the container. To do the same in your own config:
+
+```yaml
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+```
 
 Point Prometheus at it and load [`collector/alerts.yaml`](../collector/alerts.yaml) to get alerts.
 

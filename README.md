@@ -115,6 +115,12 @@ The database lost 183 deposits, and IsoWatch counted exactly 183. The fixed code
 
 ## Using it in your app
 
+```bash
+go get github.com/DCchoudhury15/isowatch@latest
+```
+
+You need PostgreSQL 18+, pgx v5, and cgo with a C compiler (IsoWatch parses SQL with the real PostgreSQL parser). See [Installing](docs/install.md).
+
 ```go
 import "github.com/DCchoudhury15/isowatch/capture"
 
@@ -217,6 +223,8 @@ make collector                                   # builds collector/build/isowat
 cd examples/bank && go run . serve -mode otlp    # the demo, sending spans to it
 ```
 
+Each release also has a ready image, `ghcr.io/dcchoudhury15/isowatch-collector`, and binaries for Linux and macOS. See [Installing](docs/install.md).
+
 One bug that happens a thousand times is one **issue**: one anomaly span, then a running count. The processor can also post new issues to Slack (or any webhook), protect the transactions involved for every replica, and export `isowatch_*` metrics with ready-made alert rules. See [Running the collector](docs/collector.md) and [Metrics and alerts](docs/alerts.md).
 
 ## Results
@@ -261,7 +269,8 @@ Checking for isolation anomalies is a well studied research area. IsoWatch does 
 | `collector/` | Config to build and run the collector |
 | `examples/bank/` | The demo service and load generator |
 | `docker/`, `docker-compose.yml` | Run everything in Docker |
-| `.github/workflows/` | Tests on every push, with a real PostgreSQL 18 |
+| `.github/workflows/` | Tests on every push, with a real PostgreSQL 18, and the release on version tags |
+| `scripts/` | The check run before a release (see [RELEASING.md](RELEASING.md)) |
 | `docs/` | How it works, limitations, results, research |
 
 ## Running the tests
