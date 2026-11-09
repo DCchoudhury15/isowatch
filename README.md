@@ -146,6 +146,16 @@ err := mon.Do(ctx, pool, pgx.TxOptions{}, func(tx *capture.Tx) error {
 
 Names appear in alerts, can be ignored, and are what protection works on.
 
+Or wrap the pool once, and keep your code as it is:
+
+```go
+db := mon.Wrap(pool) // same Exec, Query, QueryRow as the pool
+db.QueryRow(ctx, "SELECT balance FROM accounts WHERE id = $1", id).Scan(&balance)
+db.Exec(ctx, "UPDATE accounts SET balance = $1 WHERE id = $2", balance+amount, id)
+```
+
+Statements outside a transaction are tracked too, so this read-then-write race is found when you check by request (`checker.ByTrace` or `group_by: trace`). `capture.Config{WatchAll: true}` watches every table with a primary key, and `mon.CoverageReport()` shows which of your statements IsoWatch could not check. See [Adding IsoWatch to an existing app](docs/adopting.md).
+
 **Two ways to check:**
 
 | Mode | How | Good for |
@@ -225,7 +235,7 @@ All of these were measured against a real PostgreSQL 18. See [Results](docs/resu
 
 IsoWatch is careful: when it is not sure it can rewrite a query safely, it runs the query unchanged and simply does not track it. That can cause a missed anomaly, but never a false alarm and never a broken query.
 
-Simple aggregates over one table, like `SELECT count(*) FROM doctors WHERE on_call`, are tracked. It does not yet track aggregates over joins, `GROUP BY`, `DISTINCT`, `UNION`, `WITH` queries, subqueries, `MERGE`, batches or `COPY`. It needs PostgreSQL 18 or newer and the pgx v5 driver. Read the full list: [Limitations](docs/limitations.md)
+Simple aggregates over one table, like `SELECT count(*) FROM doctors WHERE on_call`, are tracked. It does not yet track aggregates over joins, `GROUP BY`, `DISTINCT`, `UNION`, `WITH` queries, subqueries, `MERGE`, batches or `COPY`. It needs PostgreSQL 18 or newer and the pgx v5 driver. `mon.CoverageReport()` shows which of your own statements this affects. Read the full list: [Limitations](docs/limitations.md)
 
 ## Is this new?
 

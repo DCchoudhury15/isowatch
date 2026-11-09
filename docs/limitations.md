@@ -4,13 +4,14 @@ IsoWatch follows one rule: **if it is not sure it can rewrite a query safely, it
 
 Because of that rule, everything below can make IsoWatch **miss** an anomaly. None of it can make IsoWatch report one that did not happen, because every link in the graph comes from versions PostgreSQL itself reported.
 
-`mon.Stats()` shows how many statements were tracked and why the others were not.
+`mon.CoverageReport()` shows how many statements on watched tables were tracked, and lists the untracked ones with the reason. See [Adding IsoWatch to an existing app](adopting.md#4-check-what-isowatch-can-see).
 
 ## Requirements
 
 * **PostgreSQL 18 or newer.** IsoWatch needs `RETURNING old.xmin`, which arrived in PostgreSQL 18. `capture.New` returns an error on older servers.
 * **Go with pgx v5.** Other drivers are not supported yet.
-* **Watched tables must be plain tables with a primary key.** Views and partitioned tables are refused at startup.
+* **Watched tables must be plain tables with a primary key.** Views and partitioned tables are refused at startup. With `WatchAll` they are skipped instead, and listed in `mon.SkippedTables()`.
+* **SQL must go through IsoWatch:** `mon.Wrap(pool)`, `mon.Do` or `mon.Begin`. Statements sent on the plain pool are not seen, and not counted in the coverage report.
 
 ## Statements that are run unchanged (not tracked)
 
@@ -22,7 +23,7 @@ Because of that rule, everything below can make IsoWatch **miss** an anomaly. No
 | Watched tables inside subqueries, or behind a join that has its own alias | Only tables directly in `FROM` (including plain joins) are tracked |
 | `MERGE` | Not supported yet |
 | Rows read by `INSERT ... SELECT` or by `UPDATE ... FROM` | The write is tracked, the extra read is not |
-| Several statements in one string, `SendBatch`, `CopyFrom` | Not supported yet |
+| Several statements in one string, `SendBatch`, `CopyFrom` | Not supported yet. Through `mon.Wrap`, batches and `CopyFrom` are counted as untracked, so the coverage report shows them |
 | Statements sent through `tx.Raw()` | By design |
 | A table alias named `old` or `new` on a write | It would clash with `RETURNING old.x` |
 | Queries that use custom result formats (`pgx.QueryResultFormats`) | The formats would not cover the hidden columns |
