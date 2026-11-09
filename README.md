@@ -217,6 +217,8 @@ make collector                                   # builds collector/build/isowat
 cd examples/bank && go run . serve -mode otlp    # the demo, sending spans to it
 ```
 
+One bug that happens a thousand times is one **issue**: one anomaly span, then a running count. The processor can also post new issues to Slack (or any webhook), protect the transactions involved for every replica, and export `isowatch_*` metrics with ready-made alert rules. See [Running the collector](docs/collector.md) and [Metrics and alerts](docs/alerts.md).
+
 ## Results
 
 All of these were measured against a real PostgreSQL 18. See [Results](docs/results.md) for details and how to repeat them.
