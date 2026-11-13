@@ -833,47 +833,92 @@ build(); addEventListener('resize', build);
 spawn('A', 50, S.sig - 60); spawn('B', 30, S.sig - 200); nextPair = clock + 3.2;
 requestAnimationFrame(frame);
 
-/* ---------- background: a rail yard that lights up near the pointer ---------- */
+/* ---------- background: a rail yard that bends and lights up around the pointer ---------- */
 const cv = $('#yard'), cx = cv.getContext('2d');
-let mx = -999, my = -999, pulses = [], dirty = true, cw, ch;
+let mx = -9999, my = -9999, px = -9999, py = -9999, pulses = [], cw, ch, scrollOff = 0, heat = 0;
 const hsh = (i, j) => { const v = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return v - Math.floor(v); };
 const COL = ['214,163,72', '90,166,180', '87,179,138', '207,90,98'];
-function sizeYard() { const d = Math.min(2, devicePixelRatio || 1); cw = innerWidth; ch = innerHeight; cv.width = cw * d; cv.height = ch * d; cx.setTransform(d, 0, 0, d, 0, 0); dirty = true; }
-function glow(x, y) {
-  let a = Math.max(0, 1 - Math.hypot(x - mx, y - my) / 230);
-  for (const p of pulses) a = Math.max(a, Math.max(0, 1 - Math.abs(Math.hypot(x - p.x, y - p.y) - p.t * 620) / 70) * (1 - p.t));
-  return a;
+const GAPY = 66, SEG = 33, RAD = 340;
+let runners = [];
+function sizeYard() {
+  const d = Math.min(2, devicePixelRatio || 1); cw = innerWidth; ch = innerHeight; cv.width = cw * d; cv.height = ch * d; cx.setTransform(d, 0, 0, d, 0, 0);
+  runners = Array.from({length: Math.max(6, Math.round(ch / 90))}, (_, i) => ({row: Math.floor(Math.random() * (ch / GAPY + 1)), x: Math.random() * cw, v: (40 + Math.random() * 70) * (i % 2 ? 1 : -1), col: COL[i % 4]}));
 }
-function drawYard() {
+// where a point of the yard ends up, and how lit it is
+function warp(x, y) {
+  let dx = px - x, dy = py - y, d = Math.hypot(dx, dy) || 1;
+  let a = Math.max(0, 1 - d / RAD), pull = a * a * 22, ox = dx / d * pull, oy = dy / d * pull;
+  for (const p of pulses) {
+    const ex = x - p.x, ey = y - p.y, e = Math.hypot(ex, ey) || 1, band = Math.max(0, 1 - Math.abs(e - p.t * 760) / 90) * (1 - p.t);
+    if (band > 0) { ox += ex / e * band * 16; oy += ey / e * band * 16; a = Math.max(a, band); }
+  }
+  return [x + ox, y + oy, a];
+}
+function drawYard(dt) {
   cx.clearRect(0, 0, cw, ch); cx.lineWidth = 1;
-  const gap = 66, seg = 33;
-  for (let r = 0, y = 26; y < ch + gap; r++, y += gap) {
-    for (let x = 0; x < cw; x += seg) {
-      const a = glow(x + seg / 2, y);
-      cx.strokeStyle = `rgba(143,160,179,${(.05 + a * .3).toFixed(3)})`;
-      cx.beginPath(); cx.moveTo(x, y); cx.lineTo(x + seg, y); cx.stroke();
+  if (px > -999) {
+    const g = cx.createRadialGradient(px, py, 0, px, py, RAD);
+    g.addColorStop(0, `rgba(214,163,72,${(.07 + heat * .06).toFixed(3)})`); g.addColorStop(1, 'rgba(214,163,72,0)');
+    cx.fillStyle = g; cx.fillRect(px - RAD, py - RAD, RAD * 2, RAD * 2);
+  }
+  const y0 = 26 - (scrollOff % (GAPY * 2));
+  // quiet part of the yard in one stroke
+  cx.strokeStyle = 'rgba(143,160,179,.055)'; cx.beginPath();
+  const hot = [];
+  for (let r = 0, y = y0; y < ch + GAPY; r++, y += GAPY) {
+    let prev = warp(0, y);
+    for (let x = 0; x < cw; x += SEG) {
+      const next = warp(x + SEG, y);
+      if (prev[2] + next[2] > 0) hot.push([prev, next]); else { cx.moveTo(x, y); cx.lineTo(x + SEG, y); }
+      prev = next;
     }
     for (let c = 0, x = (r % 2) * 66; x < cw; c++, x += 132) {
       const k = hsh(c, r); if (k < .55) continue;
-      const a = glow(x + 33, y + 33), col = COL[(k * 97 | 0) % 4];
-      cx.strokeStyle = `rgba(143,160,179,${(.05 + a * .3).toFixed(3)})`;
-      cx.beginPath(); cx.moveTo(x, y); cx.lineTo(x + 66, y + gap); cx.stroke();
-      cx.fillStyle = `rgba(${col},${(.16 + a * .84).toFixed(3)})`;
-      cx.beginPath(); cx.arc(x, y, 2.2 + a * 1.6, 0, 7); cx.fill();
+      const p1 = warp(x, y), p2 = warp(x + 66, y + GAPY);
+      if (p1[2] + p2[2] > 0) hot.push([p1, p2]); else { cx.moveTo(x, y); cx.lineTo(x + 66, y + GAPY); }
+      hot.push([p1, null, COL[(k * 97 | 0) % 4]]);
     }
   }
+  cx.stroke();
+  for (const [p, q, col] of hot) {
+    if (q) {
+      const a = (p[2] + q[2]) / 2;
+      cx.strokeStyle = `rgba(190,200,212,${(.055 + a * .5).toFixed(3)})`; cx.lineWidth = 1 + a * .8;
+      cx.beginPath(); cx.moveTo(p[0], p[1]); cx.lineTo(q[0], q[1]); cx.stroke();
+    } else {
+      const a = p[2];
+      if (a > .05) { cx.fillStyle = `rgba(${col},${(a * .22).toFixed(3)})`; cx.beginPath(); cx.arc(p[0], p[1], 6 + a * 9, 0, 7); cx.fill(); }
+      cx.fillStyle = `rgba(${col},${(.2 + a * .8).toFixed(3)})`; cx.beginPath(); cx.arc(p[0], p[1], 2.2 + a * 2.4, 0, 7); cx.fill();
+    }
+  }
+  cx.lineWidth = 1;
+  // small lights running along the tracks, faster and brighter near the pointer
+  for (const r of runners) {
+    const y = y0 + r.row * GAPY, w = warp(r.x, y);
+    r.x += r.v * dt * (1 + w[2] * 2.5);
+    if (r.x > cw + 40) r.x = -40; if (r.x < -40) r.x = cw + 40;
+    const tail = r.v > 0 ? -1 : 1, t2 = warp(r.x + tail * (18 + w[2] * 26), y);
+    cx.strokeStyle = `rgba(${r.col},${(.22 + w[2] * .7).toFixed(3)})`; cx.lineWidth = 2;
+    cx.beginPath(); cx.moveTo(w[0], w[1]); cx.lineTo(t2[0], t2[1]); cx.stroke();
+  }
+  cx.lineWidth = 1;
 }
-function yardLoop() {
-  if (pulses.length) { pulses.forEach(p => p.t += .022); pulses = pulses.filter(p => p.t < 1); dirty = true; }
-  if (dirty) { drawYard(); dirty = false; }
+let yl = 0;
+function yardLoop(now) {
+  const dt = Math.min(.05, (now - yl) / 1000 || 0); yl = now;
+  if (mx > -999) { if (px < -999) { px = mx; py = my; } const k = 1 - Math.pow(.0005, dt); heat = Math.min(1, Math.hypot(mx - px, my - py) / 120); px += (mx - px) * k; py += (my - py) * k; }
+  pulses.forEach(p => p.t += dt * 1.25); pulses = pulses.filter(p => p.t < 1);
+  drawYard(dt);
   requestAnimationFrame(yardLoop);
 }
 sizeYard(); addEventListener('resize', sizeYard);
 if (!reduce) {
-  addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; dirty = true; });
-  addEventListener('pointerdown', e => { pulses.push({x: e.clientX, y: e.clientY, t: 0}); });
-}
-yardLoop();
+  addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; });
+  addEventListener('pointerdown', e => { mx = e.clientX; my = e.clientY; pulses.push({x: e.clientX, y: e.clientY, t: 0}); if (pulses.length > 4) pulses.shift(); });
+  addEventListener('scroll', () => { scrollOff = scrollY * .12; }, {passive: true});
+  document.addEventListener('pointerleave', () => { mx = my = px = py = -9999; });
+  requestAnimationFrame(yardLoop);
+} else drawYard(0);
 })();
 </script>
 </body>
