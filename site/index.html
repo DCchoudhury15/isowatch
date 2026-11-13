@@ -5,515 +5,876 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IsoWatch</title>
 <meta name="description" content="IsoWatch tells you when concurrent requests silently corrupt your data in PostgreSQL, and exactly which requests did it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0e14'/%3E%3Cpath d='M5 12 10 6h12l5 6z' fill='%23d6a348'/%3E%3Crect x='7' y='12' width='18' height='14' rx='2' fill='%23233143'/%3E%3Ccircle cx='16' cy='19' r='5' fill='%23e7dfcb'/%3E%3Ccircle cx='16' cy='19' r='2.4' fill='%230a0e14'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  /* OpenTelemetry palette: blue #425CC7 + amber #F5A800 on deep navy */
-  :root {
-    --bg: #070a16;
-    --panel: #0c1226;
-    --panel-2: #111a35;
-    --line: #1c2649;
-    --line-2: #2a3768;
-    --text: #e8ecf8;
-    --muted: #8f9bc2;
-    --dim: #5a6690;
-    --blue: #425cc7;
-    --blue-2: #8597ec;
-    --amber: #f5a800;
-    --amber-2: #ffc94d;
-    --red: #f06363;
-    --green: #3ecf8e;
-    --mono: "IBM Plex Mono", ui-monospace, monospace;
-    --sans: "IBM Plex Sans", system-ui, sans-serif;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; overflow-x: hidden; }
-  canvas#bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
-  a { color: var(--blue-2); text-decoration: none; }
-  a:hover { color: var(--amber-2); }
-  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 20px; }
-  .mono { font-family: var(--mono); }
+:root{
+  --ink:#0a0e14; --ink2:#0e141d; --panel:#111924; --line:#223042; --line2:#34465c;
+  --steel:#8fa0b3; --muted:#8c98a8; --cream:#e7dfcb; --paper:#e7dfcb;
+  --amber:#d6a348; --teal:#5aa6b4; --green:#57b38a; --red:#cf5a62; --violet:#9a8ed0;
+  --serif:"DM Serif Display",Georgia,serif; --sans:"Archivo",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{background:
+  radial-gradient(900px 520px at 8% -6%,rgba(214,163,72,.10),transparent 70%),
+  radial-gradient(800px 600px at 100% 18%,rgba(90,166,180,.09),transparent 70%),
+  radial-gradient(900px 700px at 40% 108%,rgba(207,90,98,.08),transparent 70%),
+  var(--ink);
+  background-attachment:fixed;color:var(--cream);font-family:var(--sans);line-height:1.55;overflow-x:hidden;min-height:100vh}
+#yard{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+a{color:inherit}
+.wrap{position:relative;z-index:1;max-width:1220px;margin:0 auto;padding:0 20px}
+.caps{font:600 11px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 
-  /* top bar styled like a trace search header */
-  nav { position: sticky; top: 0; z-index: 20; background: rgba(7, 10, 22, 0.82); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; gap: 16px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-weight: 600; font-size: 16px; color: var(--text); }
-  .brand:hover { color: var(--text); }
-  .brand svg { flex: none; }
-  .crumbs { display: flex; gap: 4px; font-family: var(--mono); font-size: 13px; }
-  .crumbs a { color: var(--muted); padding: 6px 10px; border-radius: 6px; }
-  .crumbs a:hover { color: var(--text); background: var(--panel); }
-  .crumbs a.gh { color: var(--bg); background: var(--amber); font-weight: 600; }
-  .crumbs a.gh:hover { background: var(--amber-2); color: var(--bg); }
+/* top */
+.top{display:flex;align-items:center;justify-content:space-between;padding:14px 0}
+.logo{display:flex;align-items:center;gap:10px;font:400 24px/1 var(--serif);text-decoration:none}
+.logo svg{width:34px;height:34px}
+.top nav{display:flex;gap:22px;font-size:14px}
+.top nav a{text-decoration:none;color:var(--muted)}
+.top nav a:hover{color:var(--cream)}
 
-  /* hero */
-  .hero { display: grid; grid-template-columns: 1fr 1.08fr; gap: 48px; align-items: center; padding: 80px 0 64px; }
-  .eyebrow { font-family: var(--mono); font-size: 12.5px; color: var(--amber); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
-  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--amber); }
-  h1 { font-size: clamp(34px, 4.6vw, 54px); line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; }
-  h1 em { font-style: normal; color: var(--blue-2); }
-  .lead { margin-top: 20px; color: var(--muted); font-size: 17px; max-width: 520px; }
-  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 8px; font: 600 14.5px var(--sans); cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, color 0.15s; }
-  .btn-blue { background: var(--blue); color: #fff; }
-  .btn-blue:hover { background: #5470e0; color: #fff; }
-  .btn-line { border-color: var(--line-2); color: var(--text); background: rgba(12, 18, 38, 0.7); }
-  .btn-line:hover { border-color: var(--amber); color: var(--amber-2); }
+/* hero */
+.hero{display:grid;grid-template-columns:1.4fr .6fr;gap:40px;align-items:end;padding:10px 0 24px}
+h1{font:400 clamp(40px,5.2vw,68px)/1 var(--serif);letter-spacing:-.01em}
+h1 em{color:var(--amber)}
+.lede{max-width:640px;margin-top:14px;font-size:17px;color:#c3c9d2}
+h2{font:400 clamp(30px,4.2vw,50px)/1.05 var(--serif)}
+.sub{color:var(--muted);margin-top:10px;max-width:560px}
 
-  /* trace viewer */
-  .viewer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px rgba(66, 92, 199, 0.35); }
-  .viewer-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); gap: 10px; }
-  .dots { display: flex; gap: 6px; }
-  .dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); display: block; }
-  .axis { display: grid; grid-template-columns: 170px 1fr; font-family: var(--mono); font-size: 10.5px; color: var(--dim); border-bottom: 1px solid var(--line); }
-  .axis div:last-child { display: flex; justify-content: space-between; padding: 6px 12px; border-left: 1px solid var(--line); }
-  .axis div:first-child { padding: 6px 12px; }
-  .rows { position: relative; }
-  .row { display: grid; grid-template-columns: 170px 1fr; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid rgba(28, 38, 73, 0.6); cursor: default; transition: background 0.15s; }
-  .row:hover, .row.focus { background: var(--panel-2); }
-  .row .name { padding: 8px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-  .row .name.child { padding-left: 26px; color: var(--muted); }
-  .row .track { position: relative; border-left: 1px solid var(--line); height: 34px; background-image: linear-gradient(to right, rgba(28, 38, 73, 0.5) 1px, transparent 1px); background-size: 25% 100%; }
-  .bar { position: absolute; top: 9px; height: 16px; border-radius: 3px; background: var(--blue); width: 0; transition: width 0.55s cubic-bezier(.2,.7,.2,1); }
-  .bar.child { background: #2f428f; top: 11px; height: 12px; }
-  .bar.warn { background: var(--red); }
-  .bar.anom { background: var(--amber); box-shadow: 0 0 18px rgba(245, 168, 0, 0.55); }
-  .row.anomaly .name { color: var(--amber-2); }
-  .tag { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 4px; margin-left: 6px; vertical-align: 1px; }
-  .tag.err { background: rgba(240, 99, 99, 0.15); color: var(--red); }
-  .tag.amb { background: rgba(245, 168, 0, 0.15); color: var(--amber-2); }
-  .inspect { padding: 12px 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 66px; border-top: 1px solid var(--line); background: #0a0f20; }
-  .inspect b { color: var(--text); font-weight: 500; }
-  .inspect .k { color: var(--amber-2); }
-  svg.link { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-  svg.link path { fill: none; stroke: var(--amber); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0; transition: opacity 0.4s; }
-  svg.link path.on { opacity: 0.9; animation: dash 1s linear infinite; }
-  @keyframes dash { to { stroke-dashoffset: -16; } }
+.sign{background:#0b1017;border:1px solid var(--line);border-radius:10px;padding:12px 14px 10px;box-shadow:0 30px 60px -30px #000,inset 0 1px 0 rgba(255,255,255,.04);transform:rotate(1.2deg)}
+.sign .cap{font:600 12px/1.3 var(--mono);letter-spacing:.08em;color:var(--amber);min-height:16px;white-space:pre}
+.sign .r{display:flex;justify-content:space-between;align-items:center;margin-top:7px;background:#141c27;border-radius:6px;padding:8px 12px;position:relative}
+.sign .r span{font:600 11px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.sign .r b{font:700 26px/1 var(--mono);letter-spacing:.06em;white-space:pre}
+.sign .r.bad b{color:var(--red)}
+.sign .pg{display:flex;align-items:center;gap:8px;margin-top:12px;font:500 12px/1 var(--mono);color:var(--green)}
+.sign .pg i{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
+.sign .note{font:italic 400 17px/1.2 var(--serif);color:var(--cream);margin-top:9px;min-height:21px}
 
-  /* sections */
-  section { padding: 80px 0; scroll-margin-top: 58px; }
-  .sec-head { display: grid; grid-template-columns: 220px 1fr; gap: 32px; margin-bottom: 36px; align-items: start; }
-  .sec-label { font-family: var(--mono); font-size: 12px; color: var(--dim); border-top: 2px solid var(--blue); padding-top: 10px; }
-  .sec-label b { color: var(--amber); font-weight: 500; display: block; font-size: 13px; }
-  h2 { font-size: clamp(26px, 3.2vw, 38px); line-height: 1.15; letter-spacing: -0.02em; font-weight: 700; }
-  .sec-head p { color: var(--muted); margin-top: 12px; max-width: 640px; }
+/* stage */
+.stage{position:relative;background:linear-gradient(#0d131c,#0a0f16);border:1px solid var(--line);border-radius:14px;box-shadow:0 50px 90px -40px #000,inset 0 1px 0 rgba(255,255,255,.04);overflow:hidden}
+.hud{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line);background:#0b1017}
+.hud .l,.hud .r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{font:600 14px/1 var(--sans);color:var(--cream);background:#16202c;border:1px solid var(--line2);border-radius:7px;padding:11px 15px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .08s,background .15s}
+.btn:hover{background:#1d2a39}
+.btn:active{transform:translateY(1px)}
+.btn.go{background:var(--amber);border-color:var(--amber);color:#14100a}
+.btn.go:hover{background:#e3b45c}
+.count{font:600 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px;background:#0e151e;border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+.count b{font:700 18px/1 var(--mono);letter-spacing:0;color:var(--cream);min-width:2ch;text-align:right}
+.count.lost b{color:var(--red)} .count.caught b{color:var(--green)}
+.count.bump{animation:bump .3s}
+@keyframes bump{50%{transform:scale(1.12)}}
+#scene{display:block;width:100%;height:auto;user-select:none}
+.tape{display:flex;align-items:center;gap:12px;border-top:1px solid var(--line);background:#0b1017;padding:9px 14px;min-height:42px}
+.tape .k{flex:none}
+.tape p{font:500 13px/1.35 var(--mono);color:var(--cream);background:var(--paper);color:#17130c;border-radius:3px;padding:5px 10px;min-height:28px}
+.tape p.bad{background:#f0c9c6;color:#5a1118}
+.tape p.dim{background:#1a232f;color:var(--muted)}
+.frame{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border-top:1px solid var(--line);background:#0d131b}
+.levers{display:flex;gap:12px;flex-wrap:wrap}
+.lever{display:flex;align-items:center;gap:12px;background:#0a0f16;border:1px solid var(--line);border-radius:9px;padding:7px 16px 7px 9px;color:var(--cream);cursor:pointer;font:inherit;text-align:left;min-width:190px}
+.lever:hover{border-color:var(--line2)}
+.lever .slot{position:relative;flex:none;width:46px;height:48px;border-radius:6px;background:linear-gradient(#05080c,#131b25);box-shadow:inset 0 2px 6px #000}
+.lever .stick{position:absolute;left:50%;bottom:6px;width:7px;height:34px;margin-left:-3.5px;border-radius:4px;background:linear-gradient(90deg,#7c5f2a,#e6c781,#7c5f2a);transform-origin:50% 100%;transform:rotate(-30deg);transition:transform .28s cubic-bezier(.3,1.7,.5,1)}
+.lever .stick::after{content:"";position:absolute;left:50%;top:-8px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--red);box-shadow:inset 0 -3px 4px rgba(0,0,0,.35)}
+.lever.on .stick{transform:rotate(30deg)}
+.lever.on .stick::after{background:var(--green)}
+.lever b{display:block;font:700 12px/1.2 var(--sans);letter-spacing:.12em;text-transform:uppercase}
+.lever i{display:block;font-style:normal;font-size:12.5px;color:var(--muted);margin-top:2px}
+.lever kbd{font:600 11px var(--mono);border:1px solid var(--line2);border-radius:4px;padding:0 5px;margin-left:6px;color:var(--muted)}
+.send{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.send button{font:600 13px/1 var(--mono);color:var(--cream);background:transparent;border:1px dashed var(--line2);border-radius:6px;padding:9px 11px;cursor:pointer}
+.send button:hover{border-style:solid;background:#16202c}
+.send button[data-l=A]{border-color:var(--amber)} .send button[data-l=B]{border-color:var(--teal)} .send button[data-l=AB]{border-color:var(--red)}
+.over{position:absolute;inset:0;display:none;place-items:center;background:rgba(6,9,13,.78);backdrop-filter:blur(3px);padding:16px;z-index:5}
+.over.show{display:grid}
+.card{background:#0e151e;border:1px solid var(--line2);border-radius:12px;padding:26px;width:min(460px,100%);box-shadow:0 40px 80px -20px #000}
+.card h3{font:400 30px/1.1 var(--serif)}
+.card p{color:#c3c9d2;margin-top:8px}
+.bar{display:grid;grid-template-columns:86px 1fr 52px;gap:10px;align-items:center;margin-top:14px;font:600 13px var(--mono)}
+.bar .t{height:14px;background:#1a232f;border-radius:3px;overflow:hidden}
+.bar .t i{display:block;height:100%;width:0;background:var(--c);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.card .acts{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
 
-  /* version timeline */
-  .timeline { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
-  .tl-grid { display: grid; grid-template-columns: 130px 1fr; row-gap: 14px; align-items: center; }
-  .tl-label { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
-  .tl-lane { position: relative; height: 40px; border-radius: 8px; background: var(--panel-2); }
-  .ev { position: absolute; top: 6px; height: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: nowrap; opacity: 0.18; transition: opacity 0.3s, box-shadow 0.3s; border: 1px solid var(--line-2); background: #0d1430; color: var(--text); }
-  .ev.on { opacity: 1; }
-  .ev.read { border-color: #3b4f9e; }
-  .ev.write { background: #1b2a66; border-color: var(--blue); }
-  .ev.bad { background: rgba(240, 99, 99, 0.14); border-color: var(--red); color: #ffd0d0; }
-  .ev.ver { background: transparent; border-style: dashed; color: var(--blue-2); }
-  .ev.ver.on.latest { border-color: var(--amber); color: var(--amber-2); border-style: solid; }
-  .tl-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
-  input[type=range] { flex: 1; min-width: 180px; accent-color: var(--amber); }
-  .tl-note { font-family: var(--mono); font-size: 13px; color: var(--text); min-height: 22px; flex-basis: 100%; }
-  .tl-note .warn { color: var(--amber-2); }
-  .balance { font-family: var(--mono); font-size: 13px; color: var(--muted); }
-  .balance b { color: var(--text); }
-  .balance b.bad { color: var(--red); }
+/* scene svg */
+.bed{fill:none;stroke:#141c27;stroke-width:20;stroke-linecap:round;stroke-linejoin:round}
+.slp{fill:none;stroke:#2a394b;stroke-width:13;stroke-dasharray:3 9}
+.rail{fill:none;stroke-width:2.5;stroke-linejoin:round}
+.rail.a{stroke:var(--amber);opacity:.7} .rail.b{stroke:var(--teal);opacity:.7} .rail.s{stroke:var(--cream);opacity:.75}
+.sect{fill:none;stroke:var(--cream);stroke-width:26;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity .25s}
+.sect.busy{opacity:.07}
+.sect.bad{stroke:var(--red);opacity:.34;transition:none}
+.lbl{font:600 10px var(--sans);letter-spacing:.14em;text-transform:uppercase;fill:var(--muted)}
+.plate rect{fill:var(--cream)} .plate text{font:700 10.5px var(--mono);fill:#12100b;text-anchor:middle;letter-spacing:.06em}
+.plate.pa rect{fill:var(--amber)} .plate.pb rect{fill:var(--teal)}
+.signal .hit{fill:transparent}
+.signal .pulse{fill:none;stroke:var(--amber);stroke-width:2;opacity:0}
+.game .signal{cursor:pointer}
+.game .signal .pulse{animation:pulse 1.1s infinite;transform-box:fill-box;transform-origin:center}
+@keyframes pulse{0%{opacity:.8;transform:scale(.6)}100%{opacity:0;transform:scale(1.35)}}
+.lr,.lg{fill:#1c2530}
+.signal.red .lr{fill:var(--red);filter:drop-shadow(0 0 6px var(--red))}
+.signal.green .lg{fill:var(--green);filter:drop-shadow(0 0 6px var(--green))}
+.train .body{fill:var(--amber)} .train.B .body{fill:var(--teal)}
+.train.stale .body{fill:var(--red)}
+.train .win{fill:#0a0e14;opacity:.75} .train .dark{fill:#1d2733}
+.train .lamp{fill:#fff3cf}
+.wheel{fill:#0a0e14;stroke:var(--steel);stroke-width:1.6}
+.crate rect{fill:var(--cream);stroke:#12100b;stroke-width:1}
+.crate text{font:700 11px var(--mono);fill:#12100b;text-anchor:middle}
+.tid{font:700 9px var(--mono);fill:#12100b;text-anchor:middle}
+.chalk{font:600 11px var(--mono);fill:var(--cream);text-anchor:middle;paint-order:stroke;stroke:#0a0e14;stroke-width:4px;stroke-linejoin:round}
+.chalk.bad{fill:#ff9aa2}
+.ph .chalk{font-size:13px} .ph .lbl{font-size:11px}
+.ghost{font:700 15px var(--mono);fill:var(--red);text-anchor:middle;paint-order:stroke;stroke:#0a0e14;stroke-width:4px;animation:ghost 1.9s ease-out forwards}
+.ghost.quiet{fill:#5d6877}
+@keyframes ghost{0%{opacity:0;transform:translateY(6px)}15%{opacity:1}100%{opacity:0;transform:translateY(-58px)}}
+.puff{fill:none;stroke-width:2;transform-box:fill-box;transform-origin:center;animation:puff .6s ease-out forwards}
+@keyframes puff{from{transform:scale(.3);opacity:.9}to{transform:scale(1.6);opacity:0}}
+.zap{stroke:var(--red);stroke-width:2;stroke-dasharray:5 5;animation:zap .8s linear forwards}
+@keyframes zap{to{stroke-dashoffset:-40;opacity:0}}
+#tower{cursor:pointer}
+#tower .in{transform-box:fill-box;transform-origin:50% 100%}
+#tower.ring .in{animation:ring .5s}
+@keyframes ring{20%{transform:rotate(-3deg)}40%{transform:rotate(3deg)}60%{transform:rotate(-2deg)}80%{transform:rotate(1deg)}}
+#tower .arm{transition:transform .3s cubic-bezier(.3,1.6,.5,1);transform-box:view-box}
+#tower .armfill{fill:var(--cream);transition:fill .2s}
+#tower.alarm .armfill{fill:var(--red)}
+#tower .pupil{fill:var(--amber);transition:fill .2s}
+#tower.alarm .pupil{fill:var(--red)}
+#tower .lid{opacity:0}
+#tower.sleep .lid,#tower.blink .lid{opacity:1}
+#tower .zz{opacity:0;font:italic 400 20px var(--serif);fill:var(--muted)}
+#tower.sleep .zz{opacity:1;animation:zz 2.4s ease-in-out infinite}
+@keyframes zz{50%{transform:translateY(-6px)}}
+#tower.sleep .glass{opacity:.25}
+.bpanel{fill:#0b1017;stroke:var(--line2)}
+.bh{font:600 10.5px var(--sans);letter-spacing:.14em;text-transform:uppercase;fill:var(--muted)}
+.bl{font:600 10px var(--sans);letter-spacing:.14em;text-transform:uppercase;fill:var(--steel)}
+.tile rect{fill:#18212d} .tile line{stroke:#05080c;stroke-width:1.2}
+.tile text{font:700 25px var(--mono);fill:var(--cream);text-anchor:middle}
+.tile.flip{transform-box:fill-box;transform-origin:center;animation:flip .22s}
+@keyframes flip{from{transform:scaleY(.08)}to{transform:scaleY(1)}}
+.row-is.off .tile text{fill:var(--red)}
+.pgok{font:500 11px var(--mono);fill:var(--green)}
+.miss{font:700 12px var(--mono);fill:var(--red)}
 
-  /* alert */
-  .alert { background: #0a0f20; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .alert-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .alert-head span:first-child { color: var(--amber-2); }
-  .alert pre { padding: 18px; overflow-x: auto; font-family: var(--mono); font-size: 12.8px; line-height: 1.75; color: #c9d1ee; }
-  .alert .k { color: var(--amber-2); }
-  .alert .t { color: var(--blue-2); text-decoration: underline dotted; text-underline-offset: 3px; }
-  .alert .f { color: var(--green); }
+/* alert */
+section.blk{padding:86px 0 0}
+.two{display:grid;grid-template-columns:.8fr 1.2fr;gap:44px;align-items:start}
+.gram{position:relative;background:var(--paper);color:#17130c;border-radius:4px;padding:22px 24px 20px;font:500 13px/1.5 var(--mono);box-shadow:0 40px 70px -35px #000;transform:rotate(-.6deg)}
+.gram::before,.gram::after{content:"";position:absolute;left:0;right:0;height:8px;background:radial-gradient(circle at 6px 0,var(--ink) 4px,transparent 4.5px) 0 0/12px 8px}
+.gram::before{top:0}.gram::after{bottom:0;transform:scaleY(-1)}
+.gram .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;border-bottom:2px solid #17130c;padding-bottom:8px;font-weight:700;letter-spacing:.06em}
+.gram .stamp{position:absolute;right:20px;top:128px;border:3px solid #a8323c;color:#a8323c;font:700 13px var(--sans);letter-spacing:.2em;padding:5px 10px;border-radius:4px;transform:rotate(9deg);opacity:.85}
+.gram .stamp.hit{animation:stamp .35s}
+@keyframes stamp{from{transform:rotate(9deg) scale(1.8);opacity:0}}
+.gram dl{display:grid;grid-template-columns:104px 1fr;gap:10px 14px;margin-top:14px}
+.gram dt{font:700 9.5px/1.6 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:#7a6c50;padding-top:2px}
+.gram dd{min-width:0;overflow-wrap:anywhere}
+.gram dd span{display:block;color:#5c5340}
+.gram dd mark{background:#17130c;color:var(--paper);padding:0 5px;border-radius:2px}
+.fixes{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.fixes button{font:600 12px var(--mono);background:transparent;border:1.5px solid #17130c;border-radius:4px;padding:5px 8px;cursor:pointer;color:#17130c}
+.fixes button.on{background:#17130c;color:var(--paper)}
+.gram code{display:block;background:#d8cfb8;border-radius:3px;padding:7px 9px;font:500 12.5px/1.45 var(--mono)}
 
-  /* pipeline */
-  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
-  .stage { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 22px 20px; min-height: 210px; transition: border-color 0.2s, background 0.2s; }
-  .stage + .stage { border-left: 0; }
-  .stage:first-child { border-radius: 12px 0 0 12px; }
-  .stage:last-child { border-radius: 0 12px 12px 0; }
-  .stage:hover { background: var(--panel-2); border-color: var(--line-2); }
-  .stage .num { font-family: var(--mono); font-size: 11px; color: var(--dim); }
-  .stage h3 { font-size: 16.5px; margin: 8px 0 8px; }
-  .stage p { color: var(--muted); font-size: 14px; }
-  .stage code, p code, li code { font-family: var(--mono); font-size: 12.5px; color: var(--amber-2); background: rgba(245, 168, 0, 0.08); padding: 1px 5px; border-radius: 4px; }
-  .stage::after { content: ""; position: absolute; right: -7px; top: 50%; width: 12px; height: 12px; border-top: 1px solid var(--line-2); border-right: 1px solid var(--line-2); background: var(--panel); transform: translateY(-50%) rotate(45deg); z-index: 2; }
-  .stage:last-child::after { display: none; }
-  .stage:hover::after { background: var(--panel-2); }
-  .flow { position: absolute; left: 0; right: 0; bottom: 14px; height: 2px; pointer-events: none; overflow: hidden; }
-  .flow i { position: absolute; width: 60px; height: 2px; background: linear-gradient(90deg, transparent, var(--amber)); animation: flow 3.2s linear infinite; }
-  @keyframes flow { from { left: -60px; } to { left: 100%; } }
+/* departures board */
+.dep{background:#080b10;border:1px solid var(--line);border-radius:12px;padding:8px;margin-top:28px;box-shadow:0 40px 80px -40px #000}
+.dep .hd,.dep .rw{display:grid;grid-template-columns:1.5fr 1fr 22px;gap:14px;align-items:center;padding:11px 14px}
+.dep .hd{font:600 10px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.dep .rw{width:100%;border:0;border-top:1px solid #151d28;background:transparent;color:var(--amber);font:600 15px/1.25 var(--mono);letter-spacing:.04em;text-align:left;cursor:pointer;white-space:pre-wrap}
+.dep .rw:hover{background:#0d121a}
+.dep .rw span:nth-child(2){color:var(--cream)}
+.dep .rw i{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);justify-self:end}
+.dep .rw.live{color:var(--teal)}
+.dep .rw.live.red i{background:var(--red);box-shadow:0 0 10px var(--red)}
+.more{display:inline-block;margin-top:16px;color:var(--muted);font-size:14px}
 
-  /* results */
-  .numbers { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .num-cell { padding: 28px 24px; background: var(--panel); }
-  .num-cell + .num-cell { border-left: 1px solid var(--line); }
-  .num-cell .v { font-family: var(--mono); font-size: clamp(30px, 4vw, 44px); font-weight: 600; letter-spacing: -0.02em; color: var(--amber); }
-  .num-cell .l { color: var(--muted); font-size: 14px; margin-top: 6px; }
-  .runs { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
-  .runs span { font-family: var(--mono); font-size: 11.5px; padding: 2px 8px; border-radius: 4px; background: var(--panel-2); color: var(--blue-2); }
+/* install */
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:24px}
+.tabs button{font:600 13px var(--sans);color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:7px 7px 0 0;border-bottom:0;padding:10px 14px;cursor:pointer}
+.tabs button.on{color:#14100a;background:var(--amber);border-color:var(--amber)}
+.code{position:relative;background:#080b10;border:1px solid var(--line);border-radius:0 10px 10px 10px;padding:20px;font:500 13.5px/1.6 var(--mono);white-space:pre;overflow-x:auto;min-height:190px}
+.code .c{color:#6f7c8d}
+.code .copy{position:absolute;right:12px;top:12px;padding:7px 10px;font-size:12px}
+.marq{overflow:hidden;margin-top:20px;mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+.marq div{display:flex;gap:10px;width:max-content;animation:marq 36s linear infinite}
+.marq span{font:600 12px var(--mono);color:var(--steel);border:1px solid var(--line);border-radius:5px;padding:6px 10px;white-space:nowrap}
+@keyframes marq{to{transform:translateX(-50%)}}
+.cta{padding:96px 0 70px}
+.cta .acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
+footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 
-  /* terminal */
-  .term { background: #0a0f20; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .term-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .copy { font: 500 12px var(--mono); background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-  .copy:hover { border-color: var(--amber); color: var(--amber-2); }
-  .term pre { padding: 18px; font-family: var(--mono); font-size: 13.5px; line-height: 1.85; overflow-x: auto; color: #d6dcf3; }
-  .term .c { color: var(--dim); }
-  .term .p { color: var(--amber); user-select: none; }
-
-  footer { border-top: 1px solid var(--line); padding: 34px 0 50px; font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
-  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-
-  @media (max-width: 920px) {
-    .hero { grid-template-columns: 1fr; padding-top: 56px; }
-    .sec-head { grid-template-columns: 1fr; gap: 14px; }
-    .pipe { grid-template-columns: 1fr 1fr; }
-    .stage { border: 1px solid var(--line) !important; border-radius: 0 !important; }
-    .stage::after { display: none; }
-    .numbers { grid-template-columns: 1fr; }
-    .num-cell + .num-cell { border-left: 0; border-top: 1px solid var(--line); }
-  }
-  @media (max-width: 560px) {
-    .crumbs a:not(.gh) { display: none; }
-    .row, .axis { grid-template-columns: 118px 1fr; }
-    .row .name { font-size: 11px; padding: 8px 8px; }
-    .row .name.child { padding-left: 16px; }
-    .pipe { grid-template-columns: 1fr; }
-    .tl-grid { grid-template-columns: 1fr; row-gap: 6px; }
-    .tl-lane { height: auto; display: flex; flex-direction: column; gap: 6px; padding: 6px; }
-    .ev { position: static; transform: none; height: 26px; font-size: 11px; align-self: flex-start; }
-    .tl-label { margin-top: 6px; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .flow i, svg.link path.on { animation: none; }
-  }
+.show-p{display:none}
+@media(max-width:860px){
+  .hero{grid-template-columns:1fr;gap:26px;padding-top:14px}
+  .sign{display:none}
+  .two{grid-template-columns:1fr;gap:24px}
+  section.blk{padding-top:64px}
+}
+@media(max-width:720px){
+  .wrap{padding:0 16px}
+  .lede{font-size:15.5px}
+  .top nav a.x{display:none}
+  .hide-p{display:none}.show-p{display:inline}
+  .hud{padding:10px}.btn{padding:10px 12px;font-size:13px}
+  .count{padding:6px 8px;font-size:9px;gap:6px}.count b{font-size:15px}
+  .lever{min-width:0;flex:1 1 150px;padding-right:10px}
+  .frame{padding:10px}
+  .tape p{font-size:12px}
+  .gram{padding:20px 14px 16px;font-size:12px}
+  .gram dl{grid-template-columns:1fr;gap:2px}
+  .gram dt{margin-top:8px}
+  .gram .stamp{top:auto;bottom:14px;right:12px}
+  .dep .hd,.dep .rw{grid-template-columns:1fr 14px;gap:4px 10px;padding:10px}
+  .dep .hd span:nth-child(2){display:none}
+  .dep .rw{font-size:13px}
+  .dep .rw span:nth-child(2){grid-column:1;grid-row:2}
+  .dep .rw i{grid-row:1/3;grid-column:2}
+  .code{font-size:12px;padding:44px 14px 16px}
+}
+@media(prefers-reduced-motion:reduce){.marq div{animation:none}}
 </style>
 </head>
 <body>
-<canvas id="bg" aria-hidden="true"></canvas>
+<canvas id="yard" aria-hidden="true"></canvas>
+<div class="wrap">
 
-<nav>
-  <div class="wrap">
-    <a class="brand" href="#">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M3 6h10" stroke="#425CC7"/><path d="M6 12h12" stroke="#425CC7"/><path d="M9 18h12" stroke="#F5A800"/><circle cx="20" cy="6" r="2" fill="#F5A800" stroke="none"/></svg>
-      isowatch
-    </a>
-    <div class="crumbs">
-      <a href="#race">/race</a>
-      <a href="#how">/how</a>
-      <a href="#results">/results</a>
-      <a class="gh" href="https://gitlab.com/divyanshuchoudhury51/isowatch">gitlab &rarr;</a>
+<header class="top">
+  <a class="logo" href="#" aria-label="IsoWatch">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 12 9 5h14l6 7z" fill="#d6a348"/><rect x="6" y="12" width="20" height="16" rx="2" fill="#233143"/><circle cx="16" cy="20" r="5.6" fill="#e7dfcb"/><circle cx="16" cy="20" r="2.6" fill="#0a0e14"/></svg>
+    IsoWatch
+  </a>
+  <nav>
+    <a class="x" href="#alert">The alert</a>
+    <a class="x" href="#results">Results</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/DCchoudhury15/isowatch">GitHub</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div>
+    <h1>Two requests. <br class="show-p">One row.<br><em>One write gone.</em></h1>
+    <p class="lede">When two requests change the same row at the same moment, PostgreSQL can let one overwrite the other and still say OK. IsoWatch watches your real traffic and tells you when it happens, which requests did it, and how to fix it.</p>
+  </div>
+  <div class="sign" aria-live="off">
+    <div class="cap" id="s-cap">TWO DEPOSITS, +50 AND +30</div>
+    <div class="r"><span>should be</span><b id="s-should">180</b></div>
+    <div class="r bad"><span>is</span><b id="s-is">130</b></div>
+    <div class="pg"><i></i>PostgreSQL: OK, no errors</div>
+    <p class="note" id="s-note">No error. No log line.</p>
+  </div>
+</section>
+
+<section class="stage" id="stage">
+  <div class="hud">
+    <div class="l">
+      <button class="btn go" id="play">&#9654; <span class="hide-p">You work the signals</span><span class="show-p">Play</span></button>
+      <button class="btn" id="rush"><span class="hide-p">Rush hour</span><span class="show-p">Rush</span></button>
+    </div>
+    <div class="r">
+      <span class="count" id="c-through">through<b>0</b></span>
+      <span class="count lost" id="c-lost">lost<b>0</b></span>
+      <span class="count caught" id="c-caught">caught<b>0</b></span>
     </div>
   </div>
-</nav>
+  <svg id="scene" role="img" aria-label="Two trains, one for each request, share a single track that stands for one database row. When both read the balance before either writes, one deposit is lost."></svg>
+  <div class="tape"><span class="caps k">wire</span><p id="tape">Each train is a request carrying a deposit. The single track is one row.</p></div>
+  <div class="frame">
+    <div class="levers">
+      <button class="lever on" id="lv-watch" role="switch" aria-checked="true"><span class="slot"><span class="stick"></span></span><span><b>IsoWatch</b><i>watching</i></span></button>
+      <button class="lever" id="lv-protect" role="switch" aria-checked="false"><span class="slot"><span class="stick"></span></span><span><b>Protect</b><i>off, losses go on</i></span></button>
+      <button class="lever on" id="lv-a" hidden><span class="slot"><span class="stick"></span></span><span><b>Signal A<kbd>A</kbd></b><i>go</i></span></button>
+      <button class="lever on" id="lv-b" hidden><span class="slot"><span class="stick"></span></span><span><b>Signal B<kbd>B</kbd></b><i>go</i></span></button>
+    </div>
+    <div class="send" id="send">
+      <span class="caps">send a deposit</span>
+      <button data-l="A">on A</button><button data-l="B">on B</button><button data-l="AB">both at once</button>
+    </div>
+  </div>
+  <div class="over" id="over"></div>
+</section>
 
-<div class="wrap">
-  <header class="hero">
+<section class="blk" id="alert">
+  <div class="two">
     <div>
-      <div class="eyebrow">PostgreSQL 18 &middot; OpenTelemetry</div>
-      <h1>Your database lost a write. <em>IsoWatch shows you the trace that did it.</em></h1>
-      <p class="lead">Under PostgreSQL's default isolation level, two concurrent requests can silently overwrite each other. No error, no log line. IsoWatch catches lost updates and write skew as they happen in live traffic and adds an anomaly span to the guilty trace.</p>
-      <div class="actions">
-        <a class="btn btn-blue" href="https://gitlab.com/divyanshuchoudhury51/isowatch">View source</a>
-        <a class="btn btn-line" href="#start">Run the demo</a>
-      </div>
+      <h2>This is what lands in your trace.</h2>
+      <p class="sub">Not a guess. IsoWatch reads the row version each request saw and the version it replaced. This one is the last it caught on the track above.</p>
+      <p class="sub">Open the two requests in Jaeger, SigNoz or Grafana Tempo. Pick a fix.</p>
     </div>
+    <div class="gram" id="gram">
+      <div class="head"><span id="g-kind">LOST UPDATE</span><span>public.accounts(1)</span></div>
+      <div class="stamp" id="g-stamp">CAUGHT</div>
+      <dl>
+        <dt>What happened</dt><dd id="g-what">A request wrote this row from an old read and replaced 1 newer version it never saw.</dd>
+        <dt>Which requests</dt><dd id="g-who"></dd>
+        <dt>Which SQL</dt><dd id="g-sql"></dd>
+        <dt>The fix</dt><dd>
+          <div class="fixes" id="fixes"><button data-f="0" class="on">lock the read</button><button data-f="1">one relative update</button><button data-f="2">SERIALIZABLE</button><button data-f="3">let IsoWatch do it</button></div>
+          <code id="g-fix"></code>
+        </dd>
+      </dl>
+    </div>
+  </div>
+</section>
 
-    <div class="viewer" id="viewer">
-      <div class="viewer-head">
-        <div class="dots"><i></i><i></i><i></i></div>
-        <span>service: bank-demo &middot; 2 traces</span>
-        <span id="replayTrace" style="cursor:pointer;color:var(--amber-2)">&#8635; replay</span>
-      </div>
-      <div class="axis"><div>span</div><div><span>0ms</span><span>4ms</span><span>8ms</span><span>12ms</span></div></div>
-      <div class="rows" id="rows">
-        <div class="row" data-info="trace <b>77c63e5e</b> &middot; POST /deposit amount=50 &middot; status 200"><div class="name">POST /deposit +50</div><div class="track"><span class="bar" data-l="2" data-w="52"></span></div></div>
-        <div class="row" data-info="<b>SELECT</b> balance FROM accounts WHERE id = $1 &middot; read version <span class='k'>xmin 3448</span>"><div class="name child">SELECT accounts</div><div class="track"><span class="bar child" data-l="6" data-w="10"></span></div></div>
-        <div class="row" data-info="<b>UPDATE</b> accounts SET balance = $1 &middot; replaced <span class='k'>3448</span>, wrote <span class='k'>3449</span>"><div class="name child">UPDATE accounts</div><div class="track"><span class="bar child" data-l="30" data-w="14"></span></div></div>
-        <div class="row" id="rowB" data-info="trace <b>3eed3a5c</b> &middot; POST /deposit amount=30 &middot; status 200"><div class="name">POST /deposit +30</div><div class="track"><span class="bar" data-l="10" data-w="82"></span></div></div>
-        <div class="row" data-info="<b>SELECT</b> balance FROM accounts WHERE id = $1 &middot; read version <span class='k'>xmin 3448</span> (stale by the time it writes)"><div class="name child">SELECT accounts</div><div class="track"><span class="bar child" data-l="14" data-w="10"></span></div></div>
-        <div class="row" data-info="<b>UPDATE</b> accounts SET balance = $1 &middot; read 3448 but replaced <span class='k'>3449</span>, a version it never saw"><div class="name child">UPDATE accounts <span class="tag err">stale</span></div><div class="track"><span class="bar child warn" data-l="62" data-w="14"></span></div></div>
-        <div class="row anomaly" id="rowAnom" data-info="<span class='k'>isowatch.anomaly</span> kind=lost-update table=accounts(1) &middot; links to trace <b>77c63e5e</b> &middot; fix: SELECT ... FOR UPDATE"><div class="name child">isowatch.anomaly <span class="tag amb">lost-update</span></div><div class="track"><span class="bar anom" data-l="80" data-w="11"></span></div></div>
-        <svg class="link" id="link"><path id="linkPath" d=""/></svg>
-      </div>
-      <div class="inspect" id="inspect">Hover a span to inspect it.</div>
-    </div>
-  </header>
+<section class="blk" id="results">
+  <h2>Checked against a real PostgreSQL 18.</h2>
+  <div class="dep" id="dep">
+    <div class="hd"><span>Check</span><span>Result</span><span></span></div>
+  </div>
+  <a class="more" href="https://github.com/DCchoudhury15/isowatch/blob/main/docs/results.md">How these were measured, and how to repeat them</a>
+</section>
+
+<section class="blk" id="install">
+  <h2>Put it on your line.</h2>
+  <p class="sub">Needs PostgreSQL 18. Go apps use the library, everything else uses the proxy.</p>
+  <div class="tabs" id="tabs"></div>
+  <div class="code"><button class="btn copy" id="copy">Copy</button><span id="code"></span></div>
+  <div class="marq"><div id="marq"></div></div>
+</section>
+
+<section class="cta">
+  <h2>Free and open source.<br>Go lose a few deposits first.</h2>
+  <div class="acts">
+    <a class="btn go" href="https://github.com/DCchoudhury15/isowatch">Get it on GitHub</a>
+    <a class="btn" href="https://github.com/DCchoudhury15/isowatch/blob/main/docs/how-it-works.md">How it works</a>
+    <a class="btn" href="https://github.com/DCchoudhury15/isowatch/blob/main/docs/limitations.md">What it cannot see</a>
+    <a class="btn" href="#stage">Back to the trains</a>
+  </div>
+</section>
+
+<footer><span>IsoWatch. Apache 2.0.</span><span>Lost updates and write skew, found on real PostgreSQL traffic.</span></footer>
 </div>
 
-<section id="race">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="sec-label"><b>01 / the race</b>accounts(1)</div>
-      <div>
-        <h2>Two deposits of +50 and +30. The balance ends at 130, not 180.</h2>
-        <p>Drag through the timeline. Every row version in PostgreSQL carries <code>xmin</code>, the id of the transaction that wrote it. Watch which version each request reads and which one it replaces.</p>
-      </div>
-    </div>
-    <div class="timeline">
-      <div class="tl-grid">
-        <div class="tl-label">request A +50</div>
-        <div class="tl-lane">
-          <span class="ev read" data-s="1" style="left:14%">read v3448 &rarr; 100</span>
-          <span class="ev write" data-s="3" style="left:46%">write v3449 = 150</span>
-        </div>
-        <div class="tl-label">request B +30</div>
-        <div class="tl-lane">
-          <span class="ev read" data-s="2" style="left:28%">read v3448 &rarr; 100</span>
-          <span class="ev bad r2" data-s="4" style="left:78%">replace v3449 = 130</span>
-        </div>
-        <div class="tl-label">row versions</div>
-        <div class="tl-lane">
-          <span class="ev ver" data-s="0" style="left:9%">v3448</span>
-          <span class="ev ver" data-s="3" style="left:46%">v3449</span>
-          <span class="ev ver r2" data-s="4" style="left:78%">v3450</span>
-        </div>
-      </div>
-      <div class="tl-controls">
-        <button class="btn btn-line" id="tlPlay" type="button">&#9654; play</button>
-        <input type="range" id="tlRange" min="0" max="5" value="0" step="1" aria-label="timeline step">
-        <span class="balance">balance <b id="tlBal">100</b> &middot; expected <b>180</b></span>
-        <div class="tl-note" id="tlNote"></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="alert">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="sec-label"><b>02 / the alert</b>isowatch.anomaly</div>
-      <div>
-        <h2>Facts, not guesses. The SQL, the traces and the fix.</h2>
-        <p>The alert lands in your tracing tool (Jaeger, SigNoz, Grafana Tempo) as a span linked to every request involved.</p>
-      </div>
-    </div>
-    <div class="alert">
-      <div class="alert-head"><span>ANOMALY lost-update</span><span>public.accounts(1)</span></div>
-<pre><span class="k">Lost update on public.accounts(1):</span> a transaction wrote this row based on an old read
-and replaced 1 newer version(s) it never saw.
-  deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> read     version 3449: SELECT balance FROM accounts WHERE id = $1
-  deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> replaced version 3449: UPDATE accounts SET balance = $1 WHERE id = $2
-  deposit (txn 95392cf0) in trace <span class="t">3eed3a5c</span> wrote    version 3450: UPDATE accounts SET balance = $1 WHERE id = $2
-  deposit (txn 75d0a9c6) in trace <span class="t">77c63e5e</span> replaced version 3450: UPDATE accounts SET balance = $1 WHERE id = $2
-  <span class="f">fix: add FOR UPDATE to the SELECT, or write SET balance = balance + $1,
-       or run these transactions at SERIALIZABLE and retry on error 40001.</span></pre>
-    </div>
-  </div>
-</section>
-
-<section id="how">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="sec-label"><b>03 / the pipeline</b>app &rarr; collector</div>
-      <div>
-        <h2>From your pgx transaction to an anomaly span.</h2>
-        <p>Two hidden columns on the way in, a dependency graph on the way out. The checking model is Adya's, the same one the Jepsen tool Elle uses.</p>
-      </div>
-    </div>
-    <div class="pipe">
-      <div class="stage"><div class="num">capture</div><h3>Track what you read</h3><p>On <code>SELECT</code> the row's <code>xmin</code> is added as a hidden column. Your code gets exactly the columns it asked for.</p></div>
-      <div class="stage"><div class="num">capture</div><h3>Track what you replaced</h3><p>Writes get <code>RETURNING old.xmin, new.xmin</code>, new in PostgreSQL 18. Now every overwrite has proof.</p></div>
-      <div class="stage"><div class="num">collector processor</div><h3>Find the cycle</h3><p>Transactions become OTel spans. The processor builds the graph and looks for cycles across traces, in any order they arrive.</p></div>
-      <div class="stage"><div class="num">protect</div><h3>Fix only where it hurts</h3><p>Once it sees an anomaly, IsoWatch can run just those named transactions at SERIALIZABLE and retry them.</p></div>
-      <div class="flow"><i></i></div>
-    </div>
-  </div>
-</section>
-
-<section id="results">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="sec-label"><b>04 / the numbers</b>real PostgreSQL 18</div>
-      <div>
-        <h2>It counts exactly what the database lost.</h2>
-        <p>16 workers, 640 increments, 5 runs. Then the same code with protection turned on.</p>
-      </div>
-    </div>
-    <div class="numbers">
-      <div class="num-cell"><div class="v" data-count="5" data-suffix=" / 5">0 / 5</div><div class="l">runs where lost writes counted matched lost writes in the database</div><div class="runs"><span>582</span><span>582</span><span>594</span><span>596</span><span>592</span></div></div>
-      <div class="num-cell"><div class="v" data-count="0">0</div><div class="l">false alarms at SERIALIZABLE and with SELECT ... FOR UPDATE</div></div>
-      <div class="num-cell"><div class="v" data-count="640" data-prefix="0 / ">0 / 0</div><div class="l">increments lost after protection kicked in (16 were lost before it did)</div></div>
-    </div>
-  </div>
-</section>
-
-<section id="start">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="sec-label"><b>05 / try it</b>docker only</div>
-      <div>
-        <h2>See it in two minutes.</h2>
-        <p>Starts PostgreSQL 18, Jaeger, the IsoWatch collector and a tiny bank with the bug. Then open Jaeger and look for the red traces.</p>
-      </div>
-    </div>
-    <div class="term">
-      <div class="term-head"><span>bash</span><button class="copy" id="copy" type="button">copy</button></div>
-<pre id="cmds"><span class="p">$ </span>git clone https://gitlab.com/divyanshuchoudhury51/isowatch &amp;&amp; cd isowatch
-<span class="p">$ </span>make demo-up
-<span class="p">$ </span>make demo-load              <span class="c"># 200 concurrent deposits, buggy code</span>
-<span class="p">$ </span>make demo-load MODE=-auto   <span class="c"># same code, protected by IsoWatch</span>
-<span class="c"># open http://localhost:16686, service bank-demo</span></pre>
-    </div>
-  </div>
-</section>
-
-<footer>
-  <div class="wrap">
-    <span>isowatch &middot; Divyanshu Choudhury</span>
-    <span><a href="https://gitlab.com/divyanshuchoudhury51/isowatch">gitlab</a></span>
-  </div>
-</footer>
-
 <script>
-const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-// Background: faint span bars drifting across lanes, lit amber near the pointer.
 (() => {
-  const canvas = document.getElementById("bg"), ctx = canvas.getContext("2d");
-  const p = { x: -9999, y: -9999 };
-  let w = 0, h = 0, bars = [];
-  const LANE = 26;
-  const seed = () => {
-    bars = [];
-    for (let y = LANE; y < h; y += LANE) {
-      let x = -Math.random() * 300;
-      while (x < w + 300) {
-        const len = 30 + Math.random() * 160;
-        bars.push({ x, y, len, speed: 0.08 + Math.random() * 0.22 });
-        x += len + 40 + Math.random() * 260;
-      }
-    }
-  };
-  const resize = () => {
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    w = innerWidth; h = innerHeight;
-    canvas.width = w * dpr; canvas.height = h * dpr;
-    canvas.style.width = w + "px"; canvas.style.height = h + "px";
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    seed();
-  };
-  addEventListener("mousemove", e => { p.x = e.clientX; p.y = e.clientY; }, { passive: true });
-  addEventListener("touchmove", e => { if (e.touches[0]) { p.x = e.touches[0].clientX; p.y = e.touches[0].clientY; } }, { passive: true });
-  addEventListener("resize", resize);
-  const draw = () => {
-    ctx.clearRect(0, 0, w, h);
-    const g = ctx.createRadialGradient(w * 0.8, h * 0.1, 0, w * 0.8, h * 0.1, Math.max(w, h) * 0.7);
-    g.addColorStop(0, "rgba(66, 92, 199, 0.16)"); g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    for (const b of bars) {
-      if (!still) { b.x += b.speed; if (b.x > w + 40) b.x = -b.len - Math.random() * 200; }
-      const cx = Math.max(b.x, Math.min(p.x, b.x + b.len));
-      const d = Math.hypot(cx - p.x, b.y - p.y);
-      const near = d < 170 ? 1 - d / 170 : 0;
-      ctx.fillStyle = near > 0 ? `rgba(245, 168, 0, ${0.06 + near * 0.45})` : "rgba(66, 92, 199, 0.10)";
-      ctx.fillRect(b.x, b.y - 2, b.len, 4);
-    }
-    requestAnimationFrame(draw);
-  };
-  resize(); draw();
-})();
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const hex = n => Array.from({length: n}, () => '0123456789abcdef'[Math.random() * 16 | 0]).join('');
+const rnd = a => a[Math.random() * a.length | 0];
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// Trace viewer: bars grow in order, then the anomaly span and its link appear.
-(() => {
-  const rows = [...document.querySelectorAll("#rows .row")];
-  const inspect = document.getElementById("inspect");
-  const path = document.getElementById("linkPath");
-  const container = document.getElementById("rows");
-  let timers = [];
-  const drawLink = () => {
-    const cr = container.getBoundingClientRect();
-    const a = rows[0].querySelector(".bar").getBoundingClientRect();
-    const b = document.querySelector("#rowAnom .bar").getBoundingClientRect();
-    const x1 = b.left - cr.left + b.width / 2, y1 = b.top - cr.top;
-    const x2 = a.right - cr.left, y2 = a.bottom - cr.top;
-    path.setAttribute("d", `M ${x1} ${y1} C ${x1} ${y1 - 60}, ${x2 + 40} ${y2 + 40}, ${x2} ${y2}`);
-  };
-  const play = () => {
-    timers.forEach(clearTimeout); timers = [];
-    path.classList.remove("on");
-    rows.forEach(r => { const bar = r.querySelector(".bar"); bar.style.transition = "none"; bar.style.width = "0"; bar.style.left = bar.dataset.l + "%"; });
-    requestAnimationFrame(() => rows.forEach((r, i) => {
-      timers.push(setTimeout(() => {
-        const bar = r.querySelector(".bar");
-        bar.style.transition = "";
-        bar.style.width = bar.dataset.w + "%";
-        if (r.id === "rowAnom") timers.push(setTimeout(() => { drawLink(); path.classList.add("on"); inspect.innerHTML = r.dataset.info; }, 600));
-      }, still ? 0 : 280 * i));
-    }));
-  };
-  rows.forEach(r => {
-    r.addEventListener("mouseenter", () => { inspect.innerHTML = r.dataset.info; rows.forEach(x => x.classList.toggle("focus", x === r)); });
+/* ---------- flap text ---------- */
+function flap(node, text, dur = 650) {
+  const set = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  if (reduce) { node.textContent = text; return; }
+  const t0 = performance.now(), n = text.length;
+  (function step(now) {
+    const p = (now - t0) / dur; let out = '';
+    for (let i = 0; i < n; i++) out += (p >= .25 + .75 * (i + 1) / n || text[i] === ' ') ? text[i] : set[Math.random() * set.length | 0];
+    node.textContent = p < 1 ? out : text;
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+/* ---------- hero sign ---------- */
+const SIGNS = [
+  ['TWO DEPOSITS, +50 AND +30', '180', '130', 'No error. No log line.'],
+  ['200 DEPOSITS OF +1, AT ONCE', '200', ' 17', 'PostgreSQL said OK 200 times.'],
+  ['DOCTORS ON CALL TONIGHT', '  1', '  0', 'Both went off call. That one is write skew.'],
+];
+let si = 0;
+setInterval(() => {
+  si = (si + 1) % SIGNS.length; const s = SIGNS[si];
+  flap($('#s-cap'), s[0]); flap($('#s-should'), s[1], 500); flap($('#s-is'), s[2], 800);
+  $('#s-note').textContent = s[3];
+}, 4200);
+
+/* ---------- scene ---------- */
+const svg = $('#scene'), stage = $('#stage');
+const gS = el('g', {}, svg), gT = el('g', {}, svg), gF = el('g', {}, svg);
+let L, S, phone = null;
+const GAP = 104, WAGON = 46;
+
+function layout(ph) {
+  return ph
+    ? {W: 520, H: 500, A: [[-90, 120], [130, 120], [230, 205], [620, 205]], B: [[-90, 290], [130, 290], [230, 205], [620, 205]], sigX: 44, readX: 96, writeX: 432, tower: [330, 160, .78], board: [214, 272, 296, 210], v: 150, totemX: 104}
+    : {W: 1200, H: 530, A: [[-90, 150], [520, 150], [660, 250], [1300, 250]], B: [[-90, 350], [520, 350], [660, 250], [1300, 250]], sigX: 400, readX: 470, writeX: 930, tower: [800, 190, 1], board: [770, 300, 320, 210], v: 190, totemX: 84};
+}
+function measure() {
+  const p = L.A, x0 = p[0][0];
+  const d = Math.hypot(p[2][0] - p[1][0], p[2][1] - p[1][1]);
+  const diag = p[1][0] - x0, junc = diag + d;
+  S = {diag, junc, sig: L.sigX - 26 - x0, read: L.readX - x0, write: junc + (L.writeX - p[2][0]), end: junc + (p[3][0] - p[2][0])};
+}
+function posAt(line, s) {
+  const p = L[line];
+  for (let i = 0; i < p.length - 1; i++) {
+    const dx = p[i + 1][0] - p[i][0], dy = p[i + 1][1] - p[i][1], len = Math.hypot(dx, dy);
+    if (s <= len || i === p.length - 2) { const k = s / len; return {x: p[i][0] + dx * k, y: p[i][1] + dy * k, a: Math.atan2(dy, dx) * 180 / Math.PI}; }
+    s -= len;
+  }
+}
+const pts = a => a.map(p => p.join(',')).join(' ');
+
+function plate(x, y, txt, cls, sub) {
+  const w = txt.length * 7.4 + 16;
+  const g = el('g', {class: 'plate ' + (cls || '')}, gS);
+  g.innerHTML = `<rect x="${x - w / 2}" y="${y}" width="${w}" height="19" rx="3"/><text x="${x}" y="${y + 13.5}">${txt}</text>`;
+  if (sub) { const t = el('text', {class: 'lbl', x, y: y + 34, 'text-anchor': 'middle'}, gS); t.textContent = sub; }
+}
+
+let tiles = {}, sect, tower, sigEl = {};
+function drawStatic() {
+  gS.innerHTML = ''; gT.innerHTML = ''; gF.innerHTML = '';
+  svg.setAttribute('viewBox', `0 0 ${L.W} ${L.H}`);
+  svg.classList.toggle('ph', phone);
+  const pre = l => L[l].slice(0, 3), sh = L.A.slice(2);
+  const parts = [['a', pre('A')], ['b', pre('B')], ['s', sh]];
+  for (const [, p] of parts) el('polyline', {class: 'bed', points: pts(p)}, gS);
+  const yA = L.A[0][1], yB = L.B[0][1], yS = L.A[2][1];
+  sect = el('path', {class: 'sect', d: `M${L.readX},${yA} L${pts(L.A.slice(1, 3))} L${L.writeX},${yS} M${L.readX},${yB} L${pts(L.B.slice(1, 3))}`}, gS);
+  for (const [, p] of parts) el('polyline', {class: 'slp', points: pts(p)}, gS);
+  for (const [c, p] of parts) el('polyline', {class: 'rail ' + c, points: pts(p)}, gS);
+
+  // marks where a train reads and where it writes
+  for (const [x, y] of [[L.readX, yA], [L.readX, yB], [L.writeX, yS]]) el('rect', {x: x - 1.5, y: y - 13, width: 3, height: 26, fill: '#e7dfcb', opacity: .8}, gS);
+  plate(L.totemX, yA - 46, phone ? 'REQ A' : 'REQUEST A', 'pa'); plate(L.totemX, yB - 46, phone ? 'REQ B' : 'REQUEST B', 'pb');
+  plate(L.readX, yA + 20, 'SELECT', '', phone ? '' : 'reads the balance');
+  plate(L.readX, yB + 20, 'SELECT', '', phone ? '' : 'reads the balance');
+  plate(L.writeX, yS + 20, 'UPDATE', '', phone ? '' : '');
+  const jl = el('text', {class: 'lbl', x: L.A[2][0] + (phone ? 30 : 60), y: yS + 33}, gS); jl.textContent = phone ? 'one row' : 'one row: accounts(1)';
+
+  // signals
+  for (const line of ['A', 'B']) {
+    const g = el('g', {class: 'signal green', transform: `translate(${L.sigX},${L[line][0][1]})`}, gS);
+    g.innerHTML = `<circle class="hit" r="44" cy="-34"/><circle class="pulse" r="30" cy="-45"/><rect x="-1.5" y="-30" width="3" height="20" fill="#3a4a5e"/><rect x="-9.5" y="-64" width="19" height="36" rx="5" fill="#070a0f" stroke="#3a4a5e"/><circle class="lr" cx="0" cy="-54" r="5.2"/><circle class="lg" cx="0" cy="-39" r="5.2"/>`;
+    g.addEventListener('click', () => sigClick(line));
+    sigEl[line] = g;
+  }
+
+  // station board
+  const [bx, by, bw, bh] = L.board;
+  const b = el('g', {transform: `translate(${bx},${by})`}, gS);
+  let h = `<rect class="bpanel" width="${bw}" height="${bh}" rx="8"/><text class="bh" x="16" y="25">row accounts(1) &#183; balance</text>`;
+  const tw = 30, tx0 = bw - 16 - 5 * (tw + 5) + 5;
+  [['should', 'SHOULD BE', 40], ['is', 'IS', 90]].forEach(([k, lab, y]) => {
+    h += `<g class="row-${k}" id="row-${k}"><text class="bl" x="16" y="${y + 26}">${lab}</text>`;
+    for (let i = 0; i < 5; i++) h += `<g class="tile" data-k="${k}${i}"><rect x="${tx0 + i * (tw + 5)}" y="${y}" width="${tw}" height="42" rx="3"/><text x="${tx0 + i * (tw + 5) + tw / 2}" y="${y + 30}"></text><line x1="${tx0 + i * (tw + 5)}" x2="${tx0 + i * (tw + 5) + tw}" y1="${y + 21}" y2="${y + 21}"/></g>`;
+    h += '</g>';
   });
-  container.addEventListener("mouseleave", () => rows.forEach(x => x.classList.remove("focus")));
-  document.getElementById("replayTrace").addEventListener("click", play);
-  addEventListener("resize", () => { if (path.classList.contains("on")) drawLink(); });
-  play();
-})();
+  h += `<circle cx="21" cy="${bh - 50}" r="4.5" fill="#57b38a"/><text class="pgok" x="33" y="${bh - 46}">PostgreSQL: OK, 0 errors</text><text class="miss" id="miss" x="16" y="${bh - 20}"></text>`;
+  b.innerHTML = h;
+  tiles = {}; b.querySelectorAll('.tile').forEach(t => tiles[t.dataset.k] = t);
 
-// Version timeline scrubber.
-(() => {
-  const notes = [
-    "Row accounts(1) is at version 3448, balance 100.",
-    "A reads version 3448: balance 100.",
-    "B reads the same version 3448: balance 100.",
-    "A writes 150 and commits. The row is now version 3449.",
-    "<span class='warn'>B read 3448 but replaces 3449, a version it never saw. A's +50 is gone.</span>",
-    "<span class='warn'>IsoWatch: lost-update on accounts(1), traces 77c63e5e and 3eed3a5c. Fix: SELECT ... FOR UPDATE.</span>",
-  ];
-  const bal = [100, 100, 100, 150, 130, 130];
-  const range = document.getElementById("tlRange"), note = document.getElementById("tlNote"), balEl = document.getElementById("tlBal");
-  const evs = [...document.querySelectorAll(".ev")];
-  const btn = document.getElementById("tlPlay");
-  let timer;
-  const show = s => {
-    range.value = s;
-    evs.forEach(e => e.classList.toggle("on", +e.dataset.s <= s));
-    const vers = evs.filter(e => e.classList.contains("ver") && +e.dataset.s <= s);
-    evs.forEach(e => e.classList.remove("latest"));
-    if (vers.length) vers[vers.length - 1].classList.add("latest");
-    note.innerHTML = notes[s];
-    balEl.textContent = bal[s];
-    balEl.classList.toggle("bad", s >= 4);
-  };
-  range.addEventListener("input", () => { clearInterval(timer); show(+range.value); });
-  btn.addEventListener("click", () => {
-    clearInterval(timer);
-    let s = 0; show(0);
-    timer = setInterval(() => { s++; show(s); if (s >= 5) clearInterval(timer); }, 1100);
-  });
-  show(0);
-})();
+  // the signal box (IsoWatch)
+  const [tx, ty, sc] = L.tower;
+  tower = el('g', {id: 'tower', transform: `translate(${tx},${ty}) scale(${sc})`, role: 'switch', tabindex: 0, 'aria-label': 'IsoWatch signal box, click to put it to sleep'}, gS);
+  tower.innerHTML = `<g class="in">
+    <rect x="57" y="-168" width="4" height="168" fill="#3a4a5e"/>
+    <g class="arm" id="arm"><rect class="armfill" x="59" y="-166" width="46" height="11" rx="2"/><rect x="92" y="-166" width="6" height="11" fill="#cf5a62"/></g>
+    <circle cx="59" cy="-160.500" r="4.5" fill="#0a0e14" stroke="#8fa0b3" stroke-width="1.5"/>
+    <rect x="-42" y="-74" width="84" height="74" fill="#16202c" stroke="#34465c"/>
+    <path d="M-42-50h84M-42-26h84M-14-74v24M14-50v24M-14-26v26M22-74v24" stroke="#223042"/>
+    <rect x="-58" y="-128" width="116" height="56" rx="3" fill="#233143" stroke="#34465c"/>
+    <rect class="glass" x="-50" y="-120" width="100" height="40" rx="2" fill="#d6a348" opacity=".5"/>
+    <path d="M-25-120v40M25-120v40" stroke="#233143" stroke-width="3"/>
+    <path d="M-70-128h140l-26-28h-88z" fill="#d6a348"/>
+    <path d="M-70-128h140" stroke="#0a0e14" stroke-opacity=".35" stroke-width="3"/>
+    <circle cx="0" cy="-160" r="5" fill="#e7dfcb"/>
+    <circle cx="0" cy="-100" r="21" fill="#0a0e14"/>
+    <circle cx="0" cy="-100" r="18" fill="#e7dfcb"/>
+    <circle cx="0" cy="-100" r="11.5" fill="#0a0e14"/>
+    <circle class="pupil" id="pupil" cx="0" cy="-100" r="5.5"/>
+    <g class="lid"><circle cx="0" cy="-100" r="18" fill="#3a4c63"/><path d="M-12-98q12 9 24 0" fill="none" stroke="#0a0e14" stroke-width="2.5" stroke-linecap="round"/></g>
+    <text class="zz" x="26" y="-172">z z z</text>
+    <rect x="-36" y="-68" width="72" height="17" rx="2" fill="#e7dfcb"/>
+    <text x="0" y="-55.500" text-anchor="middle" style="font:700 10.5px var(--mono);letter-spacing:.08em" fill="#12100b">ISOWATCH</text>
+  </g>`;
+  tower.addEventListener('click', () => setWatch(!watch, true));
+  tower.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWatch(!watch, true); } });
+  setArm(); tower.classList.toggle('sleep', !watch);
+  drawBoard(true);
+}
 
-// Count-up numbers.
-(() => {
-  const io = new IntersectionObserver(entries => entries.forEach(e => {
-    if (!e.isIntersecting) return;
-    io.unobserve(e.target);
-    const el = e.target, end = +el.dataset.count, pre = el.dataset.prefix || "", suf = el.dataset.suffix || "";
-    const t0 = performance.now();
-    const tick = now => {
-      const k = still ? 1 : Math.min(1, (now - t0) / 1100);
-      el.textContent = pre + Math.round(end * (1 - Math.pow(1 - k, 3))) + suf;
-      if (k < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }), { threshold: 0.4 });
-  document.querySelectorAll("[data-count]").forEach(el => io.observe(el));
-})();
+/* ---------- state ---------- */
+let trains = [], pend = [], seq = {A: 0, B: 0};
+let bal = 100, should = 100, ver = 3449;
+let through = 0, lost = 0, caught = 0;
+let watch = true, armed = false, game = null, sig = {A: true, B: true};
+let rushUntil = 0, nextPair = 0, clock = 0, lastAnom = null;
+const protecting = () => !game && watch && armed && caught > 0;
 
-// Copy the demo commands.
-document.getElementById("copy").addEventListener("click", e => {
-  const text = [...document.getElementById("cmds").innerText.split("\n")]
-    .filter(l => l.startsWith("$ ")).map(l => l.slice(2).replace(/\s+#.*$/, "")).join("\n");
-  try { navigator.clipboard.writeText(text); e.target.textContent = "copied"; } catch { e.target.textContent = "select + copy"; }
-  setTimeout(() => (e.target.textContent = "copy"), 1500);
+function setDigits(k, n, force) {
+  const s = String(n).padStart(5, ' ');
+  for (let i = 0; i < 5; i++) {
+    const t = tiles[k + i], tx = t.querySelector('text'), c = s[i] === ' ' ? '' : s[i];
+    if (tx.textContent !== c || force) { tx.textContent = c; if (!force) { t.classList.remove('flip'); void t.getBBox(); t.classList.add('flip'); } }
+  }
+}
+function drawBoard(force) {
+  setDigits('should', should, force); setDigits('is', bal, force);
+  $('#row-is').classList.toggle('off', bal !== should);
+  $('#miss').textContent = bal !== should ? `missing: ${should - bal}, and nobody was told` : '';
+}
+function hud() {
+  for (const [id, v] of [['through', through], ['lost', lost], ['caught', caught]]) {
+    const c = $('#c-' + id), b = c.querySelector('b');
+    if (b.textContent !== String(v)) { b.textContent = v; c.classList.remove('bump'); void c.offsetWidth; c.classList.add('bump'); }
+  }
+  liveRows();
+}
+let tapeTimer;
+function tape(msg, cls) {
+  const p = $('#tape'); p.className = cls || ''; clearInterval(tapeTimer);
+  if (reduce) { p.textContent = msg; return; }
+  let i = 0; p.textContent = '';
+  tapeTimer = setInterval(() => { i += 3; p.textContent = msg.slice(0, i); if (i >= msg.length) clearInterval(tapeTimer); }, 16);
+}
+
+function setArm() {
+  if (!tower) return;
+  const a = !watch ? 58 : tower.classList.contains('alarm') ? 0 : -38;
+  $('#arm').style.transformOrigin = '59px -160.5px';
+  $('#arm').style.transform = `rotate(${a}deg)`;
+}
+function levers() {
+  const w = $('#lv-watch'), p = $('#lv-protect');
+  w.classList.toggle('on', watch); w.setAttribute('aria-checked', watch); w.querySelector('i').textContent = watch ? 'watching' : 'asleep, nobody is looking';
+  p.classList.toggle('on', armed); p.setAttribute('aria-checked', armed);
+  p.querySelector('i').textContent = !armed ? 'off, losses go on' : protecting() ? 'on, trains take turns' : 'ready, needs to see one first';
+  for (const l of ['A', 'B']) { const b = $('#lv-' + l.toLowerCase()); b.classList.toggle('on', sig[l]); b.querySelector('i').textContent = sig[l] ? 'go' : 'hold'; }
+  w.hidden = p.hidden = !!game; $('#lv-a').hidden = $('#lv-b').hidden = !game; $('#send').hidden = !!game;
+  svg.classList.toggle('game', !!game);
+}
+function setWatch(v, say) {
+  if (game) return;
+  watch = v; if (!watch) armed = false;
+  tower.classList.toggle('sleep', !watch); tower.setAttribute('aria-checked', watch); setArm(); levers();
+  if (say) tape(watch ? 'IsoWatch is awake. Every lost write gets caught and named.' : 'IsoWatch is asleep. Deposits still vanish. PostgreSQL still says OK.', watch ? '' : 'dim');
+}
+function setProtect(v) {
+  if (game) return;
+  armed = v; if (armed && !watch) setWatch(true);
+  levers();
+  tape(!armed ? 'Protection off. Both lines run free again.' : protecting() ? 'Protection on. "deposit" now runs one at a time on this row. Watch the signals.' : 'Protection is ready. It switches on after the first loss IsoWatch sees.');
+}
+$('#lv-watch').onclick = () => setWatch(!watch, true);
+$('#lv-protect').onclick = () => setProtect(!armed);
+
+/* ---------- trains ---------- */
+function spawn(line, amount, s0) {
+  const id = line + (++seq[line]);
+  const g = el('g', {class: 'train ' + line}, gT);
+  const wagon = el('g', {}, g), loco = el('g', {}, g), chalk = el('text', {class: 'chalk'}, g);
+  wagon.innerHTML = `<rect class="dark" x="-19" y="-13" width="38" height="5" rx="1.5"/><g class="crate"><rect x="-16" y="-33" width="32" height="20" rx="2"/><text x="0" y="-19">+${amount}</text></g><circle class="wheel" cx="-11" cy="-5" r="4.6"/><circle class="wheel" cx="11" cy="-5" r="4.6"/>`;
+  loco.innerHTML = `<rect class="body" x="-22" y="-28" width="43" height="20" rx="4"/><rect class="body" x="-22" y="-37" width="18" height="13" rx="2.500"/><rect class="win" x="-18" y="-33" width="9" height="7" rx="1"/><rect class="dark" x="9" y="-35" width="6" height="8" rx="1"/><circle class="lamp" cx="19.500" cy="-18" r="2.600"/><circle class="wheel" cx="-12" cy="-5" r="5"/><circle class="wheel" cx="9" cy="-5" r="5"/><text class="tid" x="6" y="-14">${id}</text>`;
+  const t = {id, line, amount, s: s0 || 0, g, loco, wagon, chalk, read: false, wrote: false, readVer: 0, readBal: 0, txn: hex(8), trace: hex(8), game: !!game};
+  trains.push(t); place(t); return t;
+}
+function place(t) {
+  const a = posAt(t.line, t.s), b = posAt(t.line, t.s - WAGON);
+  t.loco.setAttribute('transform', `translate(${a.x.toFixed(1)},${a.y.toFixed(1)}) rotate(${a.a.toFixed(1)})`);
+  t.wagon.setAttribute('transform', `translate(${b.x.toFixed(1)},${b.y.toFixed(1)}) rotate(${b.a.toFixed(1)})`);
+  t.chalk.setAttribute('x', a.x.toFixed(1)); t.chalk.setAttribute('y', (a.y - 46).toFixed(1));
+  t.x = a.x; t.y = a.y;
+}
+function fx(node, ms) { setTimeout(() => node.remove(), ms); return node; }
+
+function doRead(t) {
+  t.read = true; t.readVer = ver; t.readBal = bal;
+  t.chalk.textContent = 'read ' + bal;
+}
+function doWrite(t) {
+  const stale = ver !== t.readVer, before = bal, replaced = ver - t.readVer, oldVer = ver;
+  bal = t.readBal + t.amount; should += t.amount; ver++; through++; t.wrote = true;
+  t.wagon.querySelector('.crate').remove();
+  const p = posAt(t.line, S.write);
+  fx(el('circle', {class: 'puff', cx: p.x, cy: p.y - 18, r: 22, stroke: stale ? '#cf5a62' : '#e7dfcb'}, gF), 650);
+  t.chalk.textContent = 'wrote ' + bal;
+  if (stale) {
+    lost++; if (t.game && game) game.lost++;
+    const wiped = before - t.readBal;
+    const gh = fx(el('text', {class: 'ghost' + (watch ? '' : ' quiet'), x: p.x, y: p.y - 44}, gF), 1900);
+    gh.textContent = wiped > 0 ? `+${wiped} gone` : 'overwritten';
+    if (watch) {
+      caught++; t.g.classList.add('stale'); t.chalk.classList.add('bad'); t.chalk.textContent = `read v${t.readVer}, replaced v${oldVer}`;
+      const [tx, ty, sc] = L.tower;
+      fx(el('line', {class: 'zap', x1: tx, y1: ty - 100 * sc, x2: p.x, y2: p.y - 20}, gF), 800);
+      sect.classList.add('bad'); setTimeout(() => sect.classList.remove('bad'), 420);
+      tower.classList.remove('ring'); void tower.getBBox(); tower.classList.add('ring', 'alarm'); setArm();
+      setTimeout(() => { tower.classList.remove('alarm'); setArm(); }, 900);
+      lastAnom = {t, replaced, oldVer, wiped};
+      tape(`LOST UPDATE accounts(1): txn ${t.txn} read version ${t.readVer} but replaced version ${oldVer}.${wiped > 0 ? ` +${wiped} is gone.` : ''}`, 'bad');
+      gram(true);
+      if (armed) levers();
+    } else if (!game) tape('...nothing on the wire. PostgreSQL said OK.', 'dim');
+  }
+  if (should > 90000) { bal = should = 100; }
+  drawBoard(); hud();
+  if (t.game && game) { game.done++; }
+}
+
+function inside(except) { return trains.some(u => u !== except && u.s > S.sig && !u.wrote); }
+function maySignal(t) {
+  if (game) return sig[t.line];
+  if (protecting()) return !inside(t);
+  return true;
+}
+function lineClear(line) { return !trains.some(u => u.line === line && u.s < GAP + 4); }
+
+function tick(dt) {
+  clock += dt;
+  // traffic
+  if (!game && !pend.length && clock >= nextPair) {
+    const lead = rnd(['A', 'B']), other = lead === 'A' ? 'B' : 'A', d = rnd([120, 150, 190, 240, 560, 640]);
+    pend.push({at: clock, line: lead, amount: rnd([10, 20, 30, 50])}, {at: clock + d / L.v, line: other, amount: rnd([10, 20, 30, 40])});
+    nextPair = clock + (phone ? 5.2 : 6.4);
+  }
+  for (let i = 0; i < pend.length; i++) {
+    const p = pend[i];
+    if (p.at <= clock && lineClear(p.line)) { spawn(p.line, p.amount); pend.splice(i--, 1); }
+  }
+  const v = L.v * (clock < rushUntil ? 1.9 : 1) * (game ? 1.05 : 1);
+  trains.sort((a, b) => b.s - a.s || (a.id < b.id ? -1 : 1));
+  for (let i = 0; i < trains.length; i++) {
+    const t = trains[i]; let ns = t.s + v * dt;
+    if (t.s <= S.sig && ns > S.sig && !maySignal(t)) ns = S.sig;
+    for (let j = 0; j < i; j++) {
+      const u = trains[j];
+      if (u.line === t.line) ns = Math.min(ns, u.s - GAP);
+      else ns = Math.min(ns, Math.max(S.junc - 44, u.s - GAP));
+    }
+    ns = Math.max(ns, t.s);
+    t.s = ns;
+    if (!t.read && ns >= S.read) doRead(t);
+    if (!t.wrote && ns >= S.write) doWrite(t);
+    place(t);
+  }
+  trains = trains.filter(t => { if (t.s - WAGON > S.end - 40) { t.g.remove(); return false; } return true; });
+
+  // lamps, section, eye
+  const busy = inside(null), prot = protecting();
+  for (const l of ['A', 'B']) {
+    const red = game ? !sig[l] : prot && busy;
+    sigEl[l].classList.toggle('red', red); sigEl[l].classList.toggle('green', !red);
+  }
+  sect.classList.toggle('busy', busy);
+  if (watch) {
+    const [tx, ty, sc] = L.tower, ex = tx, ey = ty - 100 * sc;
+    let best = null; for (const t of trains) if (!t.wrote && (!best || t.s > best.s)) best = t;
+    let dx = Math.sin(clock * .7) * 2, dy = 3;
+    if (best) { const ddx = best.x - ex, ddy = best.y - 20 - ey, m = Math.hypot(ddx, ddy) || 1; dx = ddx / m * 5.5; dy = ddy / m * 5.5; }
+    const pu = $('#pupil'); pu.setAttribute('cx', dx.toFixed(2)); pu.setAttribute('cy', (-100 + dy).toFixed(2));
+  }
+  if (game) gameTick();
+}
+let last = 0;
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000 || 0); last = now;
+  tick(dt); requestAnimationFrame(frame);
+}
+setInterval(() => { if (watch && tower) { tower.classList.add('blink'); setTimeout(() => tower.classList.remove('blink'), 130); } }, 3700);
+
+/* ---------- buttons ---------- */
+$('#send').addEventListener('click', e => {
+  const l = e.target.dataset && e.target.dataset.l; if (!l) return;
+  const amt = rnd([20, 30, 50]);
+  if (l === 'AB') { pend.push({at: clock, line: 'A', amount: 50}, {at: clock + 130 / L.v, line: 'B', amount: 30}); tape(protecting() ? 'Two deposits at once. Protection makes the second one wait.' : 'Two deposits at once, +50 and +30. Both will read the same balance.'); }
+  else pend.push({at: clock, line: l, amount: amt});
+  nextPair = Math.max(nextPair, clock + 5);
 });
+$('#rush').onclick = () => {
+  if (game) return;
+  for (let i = 0; i < 12; i++) pend.push({at: clock + i * .62, line: 'A', amount: 10}, {at: clock + i * .62 + .31, line: 'B', amount: 10});
+  rushUntil = clock + 16; nextPair = clock + 17;
+  tape(protecting() ? 'Rush hour: 24 deposits. Protected, so they go through one at a time.' : 'Rush hour: 24 deposits of +10 at once. Watch the board.');
+};
+function sigClick(l) {
+  if (!game) { tape('The signals run themselves here. Press "You work the signals" to take over.'); return; }
+  sig[l] = !sig[l]; levers();
+}
+$('#lv-a').onclick = () => sigClick('A'); $('#lv-b').onclick = () => sigClick('B');
+addEventListener('keydown', e => { if (!game || e.metaKey || e.ctrlKey) return; const k = e.key.toLowerCase(); if (k === 'a' || k === 'b') sigClick(k.toUpperCase()); });
+
+/* ---------- the game ---------- */
+function clearTrack() { trains.forEach(t => t.g.remove()); trains = []; pend = []; }
+function startGame() {
+  $('#over').classList.remove('show');
+  clearTrack(); bal = should = 100; drawBoard();
+  watch = true; armed = false; sig = {A: true, B: true};
+  tower.classList.remove('sleep'); setArm();
+  game = {total: 16, done: 0, lost: 0, t0: clock, over: false};
+  let at = clock + 1.2; const gaps = [0, 4.4, 4.2, 3.9, 3.6, 3.4, 3.2, 3.0];
+  for (let i = 0; i < 8; i++) {
+    at += gaps[i]; const lead = rnd(['A', 'B']);
+    pend.push({at, line: lead, amount: rnd([20, 30, 50])}, {at: at + rnd([.55, .7, .9]), line: lead === 'A' ? 'B' : 'A', amount: rnd([10, 30, 40])});
+  }
+  levers(); $('#play').hidden = true; $('#rush').hidden = true;
+  tape('You have the signals. Hold one train until the other has written. Click a signal, or press A and B.');
+  stage.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+function gameTick() {
+  if (game.over) return;
+  const t = clock - game.t0;
+  if (game.done >= game.total || t > 62) endGame();
+}
+function endGame() {
+  game.over = true;
+  const stuck = game.total - game.done, safe = game.total - game.lost - stuck, n = game.total;
+  const line = safe === n ? 'Clean run. Now do that 300,000 times a second, all night.'
+    : stuck && !game.lost ? `Nothing lost, but ${stuck} deposits never arrived. That is the price of holding everyone.`
+    : `${game.lost} ${game.lost === 1 ? 'deposit' : 'deposits'} overwritten${stuck ? `, ${stuck} never arrived` : ''}. PostgreSQL said OK every time.`;
+  const o = $('#over');
+  o.innerHTML = `<div class="card"><h3>${safe} of ${n} arrived safely.</h3><p>${line}</p>
+    <div class="bar" style="--c:var(--amber)"><span>You</span><span class="t"><i id="b-you"></i></span><span>${safe}/${n}</span></div>
+    <div class="bar" style="--c:var(--green)"><span>IsoWatch</span><span class="t"><i id="b-iw"></i></span><span>${n}/${n}</span></div>
+    <div class="acts"><button class="btn go" id="again">Play again</button><button class="btn" id="handback">Let IsoWatch do it</button></div></div>`;
+  o.classList.add('show');
+  requestAnimationFrame(() => requestAnimationFrame(() => { $('#b-you').style.width = safe / n * 100 + '%'; $('#b-iw').style.width = '100%'; }));
+  $('#again').onclick = startGame;
+  $('#handback').onclick = () => {
+    o.classList.remove('show'); game = null; clearTrack(); sig = {A: true, B: true};
+    $('#play').hidden = false; $('#rush').hidden = false; nextPair = clock + .4;
+    armed = true; levers();
+    tape(protecting() ? 'IsoWatch has the signals. "deposit" is protected, so trains take turns.' : 'IsoWatch has the signals. Protection switches on after the first loss it sees.');
+  };
+}
+$('#play').onclick = startGame;
+
+/* ---------- the alert ---------- */
+const FIX = [
+  'SELECT balance FROM accounts WHERE id = $1 FOR UPDATE',
+  'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
+  'BEGIN ISOLATION LEVEL SERIALIZABLE;  -- and retry on error 40001',
+  'mon.ProtectFrom(anomaly)  // only "deposit" runs at SERIALIZABLE, with retries',
+];
+function gram(hit) {
+  const a = lastAnom, txn = a ? a.t.txn : '75d0a9c6', tr = a ? a.t.trace : '77c63e5e', rv = a ? a.t.readVer : 3449, ov = a ? a.oldVer : 3450, n = a ? a.replaced : 1;
+  $('#g-what').textContent = `A request wrote this row from an old read and replaced ${n} newer version${n === 1 ? '' : 's'} it never saw.`;
+  $('#g-who').innerHTML = `deposit <mark>txn ${txn}</mark> in trace <mark>${tr}</mark><span>read version ${rv}, then replaced version ${ov}</span>`;
+  $('#g-sql').innerHTML = `SELECT balance FROM accounts WHERE id = $1<span>UPDATE accounts SET balance = $1 WHERE id = $2</span>`;
+  if (hit) { const s = $('#g-stamp'); s.classList.remove('hit'); void s.offsetWidth; s.classList.add('hit'); }
+}
+$('#fixes').addEventListener('click', e => {
+  const f = e.target.dataset && e.target.dataset.f; if (f == null) return;
+  document.querySelectorAll('#fixes button').forEach(b => b.classList.toggle('on', b === e.target));
+  $('#g-fix').textContent = FIX[f];
+  if (f === '3' && !game) { if (!armed) setProtect(true); stage.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+});
+$('#g-fix').textContent = FIX[0]; gram();
+
+/* ---------- results board ---------- */
+const ROWS = [
+  ['LOST WRITES COUNTED VS REALLY LOST', 'EXACT MATCH, 5 OF 5 RUNS'],
+  ['FALSE ALARMS WITH FOR UPDATE', '0'],
+  ['FALSE ALARMS AT SERIALIZABLE', '0'],
+  ['WRITE SKEW CAUGHT', 'YES'],
+  ['LOST AFTER PROTECTION CAME ON', '0 OF 640'],
+  ['EXTRA TIME PER TRANSACTION', '20 TO 55 MICROSECONDS'],
+  ['CHECKER SPEED ON ONE CORE', '300,000 TXN PER SECOND'],
+];
+const dep = $('#dep');
+ROWS.forEach(r => {
+  const b = document.createElement('button'); b.className = 'rw'; b.innerHTML = '<span></span><span></span><i></i>';
+  b.onclick = () => { flap(b.children[0], r[0]); flap(b.children[1], r[1], 900); };
+  b.children[0].textContent = r[0]; b.children[1].textContent = r[1]; dep.appendChild(b);
+});
+const live = document.createElement('button'); live.className = 'rw live'; live.innerHTML = '<span>ON YOUR VISIT</span><span id="lv"></span><i></i>'; dep.appendChild(live);
+function liveRows() { $('#lv').textContent = `${lost} LOST, ${caught} CAUGHT`; live.classList.toggle('red', lost !== caught); }
+new IntersectionObserver((es, io) => { if (es[0].isIntersecting) { io.disconnect(); dep.querySelectorAll('.rw:not(.live)').forEach((b, i) => setTimeout(() => b.click(), i * 130)); } }, {threshold: .3}).observe(dep);
+
+/* ---------- install ---------- */
+const TABS = [
+  ['Go app', `go get github.com/DCchoudhury15/isowatch@latest
+
+mon, err := capture.New(ctx, pool, capture.Config{
+    Tables: []string{"accounts", "orders"},
+    Sink:   capture.NewOTelSink(nil),
+})
+db := mon.Wrap(pool) // same Exec, Query and QueryRow as your pool`],
+  ['go test', `m := isowatchtest.New(t, pool, isowatchtest.Tables("accounts"))
+
+isowatchtest.Concurrently(t, 20, func(i int) error {
+    return m.Do(t.Context(), pool, pgx.TxOptions{}, deposit)
+})
+// the test fails if any deposit was lost`],
+  ['Any language', `make proxy
+./build/isowatch-proxy -upstream db:5432 \\
+    -dsn 'postgres://isowatch@db:5432/app' -tables accounts,orders
+
+# Ruby, Python, Java, Node: point the app at proxy-host:6432`],
+  ['Try the demo', `make demo-up      # PostgreSQL 18, Jaeger, the collector and a demo bank
+make demo-load    # 200 deposits at once through the buggy code
+
+# open http://localhost:16686 and look for the red traces`],
+];
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+function showTab(i) {
+  document.querySelectorAll('#tabs button').forEach((b, j) => b.classList.toggle('on', i === j));
+  $('#code').innerHTML = esc(TABS[i][1]).replace(/(^|\s)((?:#|\/\/) .*)$/gm, '$1<span class="c">$2</span>');
+  $('#code').dataset.raw = TABS[i][1];
+}
+TABS.forEach((t, i) => { const b = document.createElement('button'); b.textContent = t[0]; b.onclick = () => showTab(i); $('#tabs').appendChild(b); });
+showTab(0);
+$('#copy').onclick = () => { const done = () => { $('#copy').textContent = 'Copied'; setTimeout(() => $('#copy').textContent = 'Copy', 1200); }; try { navigator.clipboard.writeText($('#code').dataset.raw).then(done, done); } catch (e) { done(); } };
+const WORKS = ['PostgreSQL 18', 'pgx v5', 'OpenTelemetry', 'Jaeger', 'SigNoz', 'Grafana Tempo', 'Slack alerts', 'Prometheus metrics', 'go test', 'Ruby', 'Python', 'Java', 'Node', 'sqlcommenter'];
+$('#marq').innerHTML = WORKS.concat(WORKS).map(w => `<span>${w}</span>`).join('');
+
+/* ---------- start ---------- */
+function build() {
+  const ph = matchMedia('(max-width: 720px)').matches;
+  if (ph === phone) return;
+  phone = ph; L = layout(ph); measure(); trains = []; pend = []; drawStatic(); levers(); hud();
+  nextPair = clock + .2;
+}
+build(); addEventListener('resize', build);
+// start with one race already on the track so the page opens mid-story
+spawn('A', 50, S.sig - 60); spawn('B', 30, S.sig - 200); nextPair = clock + 3.2;
+requestAnimationFrame(frame);
+
+/* ---------- background: a rail yard that lights up near the pointer ---------- */
+const cv = $('#yard'), cx = cv.getContext('2d');
+let mx = -999, my = -999, pulses = [], dirty = true, cw, ch;
+const hsh = (i, j) => { const v = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return v - Math.floor(v); };
+const COL = ['214,163,72', '90,166,180', '87,179,138', '207,90,98'];
+function sizeYard() { const d = Math.min(2, devicePixelRatio || 1); cw = innerWidth; ch = innerHeight; cv.width = cw * d; cv.height = ch * d; cx.setTransform(d, 0, 0, d, 0, 0); dirty = true; }
+function glow(x, y) {
+  let a = Math.max(0, 1 - Math.hypot(x - mx, y - my) / 230);
+  for (const p of pulses) a = Math.max(a, Math.max(0, 1 - Math.abs(Math.hypot(x - p.x, y - p.y) - p.t * 620) / 70) * (1 - p.t));
+  return a;
+}
+function drawYard() {
+  cx.clearRect(0, 0, cw, ch); cx.lineWidth = 1;
+  const gap = 66, seg = 33;
+  for (let r = 0, y = 26; y < ch + gap; r++, y += gap) {
+    for (let x = 0; x < cw; x += seg) {
+      const a = glow(x + seg / 2, y);
+      cx.strokeStyle = `rgba(143,160,179,${(.05 + a * .3).toFixed(3)})`;
+      cx.beginPath(); cx.moveTo(x, y); cx.lineTo(x + seg, y); cx.stroke();
+    }
+    for (let c = 0, x = (r % 2) * 66; x < cw; c++, x += 132) {
+      const k = hsh(c, r); if (k < .55) continue;
+      const a = glow(x + 33, y + 33), col = COL[(k * 97 | 0) % 4];
+      cx.strokeStyle = `rgba(143,160,179,${(.05 + a * .3).toFixed(3)})`;
+      cx.beginPath(); cx.moveTo(x, y); cx.lineTo(x + 66, y + gap); cx.stroke();
+      cx.fillStyle = `rgba(${col},${(.16 + a * .84).toFixed(3)})`;
+      cx.beginPath(); cx.arc(x, y, 2.2 + a * 1.6, 0, 7); cx.fill();
+    }
+  }
+}
+function yardLoop() {
+  if (pulses.length) { pulses.forEach(p => p.t += .022); pulses = pulses.filter(p => p.t < 1); dirty = true; }
+  if (dirty) { drawYard(); dirty = false; }
+  requestAnimationFrame(yardLoop);
+}
+sizeYard(); addEventListener('resize', sizeYard);
+if (!reduce) {
+  addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; dirty = true; });
+  addEventListener('pointerdown', e => { pulses.push({x: e.clientX, y: e.clientY, t: 0}); });
+}
+yardLoop();
+})();
 </script>
 </body>
 </html>
